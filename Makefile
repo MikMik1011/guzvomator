@@ -1,4 +1,4 @@
-.PHONY: build upload monitor flash clean
+.PHONY: build upload monitor flash test clean
 
-build upload monitor flash clean:
+build upload monitor flash test clean:
 	$(MAKE) -C firmware $@
