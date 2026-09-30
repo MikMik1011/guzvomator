@@ -67,18 +67,22 @@ Senzorski čvor je Seeed Studio XIAO ESP32-C6 [3]. Ploča ima integrisan BLE i W
 
 **Hardver**
 
-- XIAO ESP32-C6 kao senzorski čvor, USB napajanje tokom razvoja i testiranja;
+- XIAO ESP32-C6 kao senzorski čvor, USB napajanje; uređaj je stalno uključen;
 - BME280 (temperatura i vlažnost vazduha) i BH1750 (osvetljenost) preko I2C, kao ambijentalni kontekst uz procenu zauzetosti;
 - Wi-Fi konekcija za slanje podataka.
 
 **Ciklus firmvera**
 
-1. Buđenje i učitavanje konfiguracije iz trajne memorije (NVS).
-2. BLE skeniranje u prozoru zadatog trajanja. Wi-Fi probe zahtevi su eventualni dodatni izvor; ESP32-C6 ima jedan 2,4 GHz radio, pa se BLE i Wi-Fi prozori izvršavaju sekvencijalno (ovo treba proveriti u praksi).
+Uređaj radi stalno, bez dubokog sna. Firmver koristi dva FreeRTOS taska: task komandne linije (čita serijski port i menja konfiguraciju) i radni task koji stalno ponavlja sledeći ciklus. Konfiguracija se deli preko muteksa, a radni task je na početku svakog ciklusa preuzima, pa se izmena primenjuje u sledećem ciklusu.
+
+1. Učitavanje konfiguracije iz trajne memorije (NVS) pri pokretanju; na početku svakog ciklusa provera da je Wi-Fi povezan (ponovni pokušaji bez blokiranja komandne linije).
+2. BLE skeniranje u prozoru zadatog trajanja. Wi-Fi ostaje povezan tokom skeniranja. ESP32-C6 ima jedan 2,4 GHz radio koji BLE i Wi-Fi dele vremenskom podelom (koegzistencija), pa prenos može da utiče na broj uhvaćenih paketa. Ovo treba proveriti u praksi poređenjem broja detektovanih uređaja sa Wi-Fi saobraćajem i bez njega. Wi-Fi probe zahtevi su eventualni dodatni izvor.
 3. Heširanje adresa uređaja, brojanje jedinstvenih heševa, RSSI filtriranje, odbacivanje sirovih adresa iz RAM-a.
 4. Očitavanje BME280 i BH1750.
-5. Slanje agregiranog zapisa preko odabranog transporta.
-6. Duboki san do sledećeg ciklusa.
+5. Slanje agregiranog zapisa preko odabranog transporta. Ako slanje ne uspe, ograničen broj poslednjih zapisa čuva se u RAM-u i šalje po ponovnom povezivanju.
+6. Kratka pauza do sledećeg ciklusa.
+
+Tačno vreme se dobija preko NTP-a putem stalno povezanog Wi-Fi-ja i koristi se za vremenske oznake zapisa i za dnevnu promenu soli.
 
 **Konfiguracija i komandna linija**
 
@@ -108,13 +112,16 @@ Primer oblika podataka (linearnost je samo ilustracija, u realnosti odnos ne mor
 - odstupanje procene od stvarne zauzetosti;
 - uticaj RSSI praga na rezultate;
 - ponašanje sistema pri različitim nivoima zauzetosti;
-- stabilnost merenja tokom vremena.
+- stabilnost merenja tokom vremena;
+- pozadinski broj uređaja iz susednih prostorija i spratova, izmeren pri praznom prostoru.
+
+Broj detektovanih uređaja nije uporediv između prostora, pa se RSSI prag i kalibracija određuju za svaki prostor posebno. RSSI ne razlikuje pravac, pa uređaji iz susednih prostorija i sa drugih spratova ulaze u slabiji deo opsega; zato se za svaki prostor beleži merenje pri praznoj prostoriji kao referenca. Za velike prostorije jedan čvor pokriva samo zonu oko sebe. Kako bi se prag mogao birati naknadno bez ponovnog fleširanja, zapis može da sadrži i brojeve uređaja za nekoliko fiksnih RSSI pragova (agregirano, bez podataka o pojedinačnim uređajima). Varijacija broja uređaja pri istom broju osoba (smena posetilaca, ponašanje telefona, rotacija adresa) navodi se u analizi.
 
 Način kalibracije (na primer regresija nad prikupljenim podacima) određuje se tek nakon analize odnosa koji se u podacima pokaže. Kalibracija važi za konkretan prostor.
 
 ## 7 Privatnost i ograničenja
 
-Obrada identifikatora uređaja vrši se lokalno na ESP32 čvoru. Adrese se heširaju solju koja se menja svakog dana, čuvaju se samo u RAM-u tokom prozora skeniranja i odbacuju posle brojanja. Centralnom sistemu se šalju samo agregirani podaci, bez adresa ili drugih podataka koji bi omogućili dugoročno praćenje pojedinačnih uređaja. Kamere se ne koriste.
+Obrada identifikatora uređaja vrši se lokalno na ESP32 čvoru. Adrese se heširaju solju koja se menja svakog dana (datum se dobija preko NTP-a), čuvaju se samo u RAM-u tokom prozora skeniranja i odbacuju posle brojanja. Centralnom sistemu se šalju samo agregirani podaci, bez adresa ili drugih podataka koji bi omogućili dugoročno praćenje pojedinačnih uređaja. Kamere se ne koriste.
 
 Pre postavljanja sistema u stvaran prostor potrebna je dozvola fakulteta za postavljanje senzora, uz proveru dodatnih zahteva u vezi sa privatnošću.
 

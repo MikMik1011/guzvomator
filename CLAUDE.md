@@ -20,7 +20,9 @@ Out of scope unless explicitly requested: web dashboard, InfluxDB, ToF ground-tr
 
 - Board: Seeed Studio XIAO ESP32-C6 (PlatformIO board `seeed_xiao_esp32c6`, Arduino framework).
 - Sensors on I2C: BME280 (temperature, humidity), BH1750 (light).
-- Wi-Fi is used only as the uplink for sending data. No Wi-Fi probe or promiscuous-mode scanning for now.
+- The node is USB-powered and always on; there is no deep sleep.
+- Wi-Fi is used only as the uplink for sending data and for NTP. No Wi-Fi probe or promiscuous-mode scanning for now.
+- Wi-Fi stays connected while BLE scans. The C6 has one 2.4 GHz radio shared by coexistence arbitration, which can cost scan packets during transfers. Verify on hardware by comparing counts with and without Wi-Fi traffic.
 - Build with PlatformIO. Keep every module a self-contained library under `firmware/lib/` so it also compiles in the Arduino IDE.
 
 ## Repository layout
@@ -28,7 +30,7 @@ Out of scope unless explicitly requested: web dashboard, InfluxDB, ToF ground-tr
 ```
 firmware/
   platformio.ini
-  src/main.cpp        wake -> run cycle -> sleep; no logic beyond orchestration
+  src/main.cpp        creates the tasks; no logic beyond orchestration
   lib/
     Config/           parameter registry (arduinoConfig-style) + NVS persistence
     Cli/              serial commands (arduinoCmdProc)
@@ -36,7 +38,6 @@ firmware/
     Sensors/          ISensor interface; BME280, BH1750 implementations
     Transport/        ITransport; HttpTransport, MqttTransport
     Payload/          serialization of readings to JSON
-    Power/            sleep scheduling
 backend/
   app/                FastAPI service
   docker-compose.yml  backend + PostgreSQL
@@ -44,15 +45,24 @@ docs/
   PLAN.md             seminar proposal (Serbian)
 ```
 
-## Firmware cycle
+## Firmware runtime
 
-1. Load config from NVS.
+Always on, two FreeRTOS tasks (the C6 is single-core, so they are time-sliced):
+- CLI task: reads serial and edits config. Blocked on input most of the time.
+- Worker task: runs the measurement cycle below, repeatedly.
+
+Config is shared through a mutex. The worker takes a snapshot at the start of each cycle, so a change applies on the next cycle. Wi-Fi settings changed from the CLI make the worker reconnect.
+
+Worker cycle:
+1. Snapshot config; make sure Wi-Fi is connected (retry with backoff, never block the CLI).
 2. BLE scan for `scan_window_s`.
 3. Hash each address with the daily salt, count unique hashes, count those above `rssi_min`, compute average RSSI. Discard raw addresses.
 4. Read BME280 and BH1750.
 5. Build the JSON payload (see "Payload").
-6. Send with the transport selected by config.
-7. Sleep for `sleep_interval_s`.
+6. Send with the transport selected by config. If sending fails, keep a bounded queue of recent readings in RAM and send them after reconnecting.
+7. Pause `scan_pause_s`.
+
+Time comes from NTP over the always-on Wi-Fi. It provides reading timestamps and the date for the daily salt. Until the first sync, use a boot-random salt and do not send readings.
 
 ## Configuration and CLI
 
@@ -62,7 +72,7 @@ Reference implementations by the supervisor, which constrain the design:
 
 License: AGPL-3.0 for the whole project, with a single `LICENSE` file in the repository root (AGPL-3.0 can be combined with the GPL-3.0 arduinoConfig). No per-file license headers or SPDX lines. Never modify or strip license notices in third-party code. To be confirmed with the supervisor.
 
-Config parameters: `device_id`, `wifi_ssid`, `wifi_pass`, `transport` (`http` or `mqtt`), `endpoint_url`, `mqtt_host`, `mqtt_topic`, `scan_window_s`, `sleep_interval_s`, `rssi_min`.
+Config parameters: `device_id`, `wifi_ssid`, `wifi_pass`, `transport` (`http` or `mqtt`), `endpoint_url`, `mqtt_host`, `mqtt_topic`, `scan_window_s`, `scan_pause_s`, `rssi_min`.
 
 CLI commands: `list`, `get <name>`, `set <name> <value>`, `save`, `reset`, `status`, `reboot`. Every parameter change must be persisted to NVS through the change callback or an explicit `save`.
 
@@ -71,6 +81,15 @@ CLI commands: `list`, `get <name>`, `set <name> <value>`, `save`, `reset`, `stat
 One JSON object per reading, identical for HTTP and MQTT. No formal schema yet; the format is not frozen. Before implementing the backend endpoint, propose the fields and confirm them, then keep firmware and backend in sync.
 
 Intended contents: node identifier, measurement time, scan window length, number of detected devices (unique salted hashes), number above the RSSI threshold, average RSSI, and optionally temperature, humidity and illuminance.
+
+Proposed addition, to confirm: counts at a fixed set of RSSI thresholds (a sweep, aggregate only), so the threshold can be chosen offline per site without reflashing.
+
+## Calibration
+
+- Counts are not comparable between sites; calibration is per space. `rssi_min` is a per-site config value.
+- Background devices from neighbouring rooms, floors and corridors add to the weak-RSSI band and RSSI cannot tell direction. Record an empty-room baseline per site and analyze counts against it.
+- Large rooms: one node covers a zone, not the whole room. Multiple nodes (distinct `device_id`) are possible but not planned; overlapping zones would double-count and hashes are not shared between nodes.
+- Headcount alone does not explain count variation (crowd turnover, phone behaviour, address rotation). Report the variance in the analysis.
 
 ## Backend
 
@@ -104,4 +123,4 @@ Do one step at a time and stop for review after each.
 - Code: clean, self-documenting, readable, maintainable and reusable. Prefer clear names and small functions over comments. Comment only when necessary (the why, a non-obvious constraint), never to narrate what the code does, and keep comments short and plain.
 - Git: never run git write operations (add, commit, push, branch, remote, reset, etc.) unless explicitly asked for that specific operation. Never commit automatically.
 - Commit messages: a single conventional-commit header only (`type(scope): summary`), no body, no trailers. Never add `Co-Authored-By` or any other attribution line.
-- Surface unresolved decisions instead of assuming defaults. Currently open: whether Azure is mandatory, whether ToF ground truth stays in scope, exact config format and CLI command set (depends on the supervisor's libraries), source of a trustworthy date for the daily salt (no RTC; Wi-Fi/NTP is not up during the scan).
+- Surface unresolved decisions instead of assuming defaults. Currently open: whether Azure is mandatory, whether ToF ground truth stays in scope, exact config format and CLI command set (depends on the supervisor's libraries), whether readings while offline are queued in RAM only or also persisted, and the size of that queue.
