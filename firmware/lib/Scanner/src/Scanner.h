@@ -12,9 +12,9 @@ class Scanner {
   ~Scanner();
 
   bool begin();
-  // Blocks for windowS seconds. Hashes live in RAM only for this call.
+  // Blocks for windowS seconds. Uses a fresh random salt that is wiped, with
+  // the hashes, before returning.
   ScanResult scan(uint16_t windowS, int8_t rssiMin);
-  void setSalt(const uint8_t* salt, size_t len);
 
  private:
   struct Impl;

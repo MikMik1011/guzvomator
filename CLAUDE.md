@@ -21,7 +21,8 @@ Out of scope unless explicitly requested: web dashboard, InfluxDB, ToF ground-tr
 - Board: Seeed Studio XIAO ESP32-C6 (PlatformIO board `seeed_xiao_esp32c6`, Arduino framework).
 - Sensors on I2C: BME280 (temperature, humidity), BH1750 (light).
 - The node is USB-powered and always on; there is no deep sleep.
-- Wi-Fi is used only as the uplink for sending data and for NTP. No Wi-Fi probe or promiscuous-mode scanning for now.
+- Wi-Fi is used only as the uplink for sending data. No NTP, no Wi-Fi probe or promiscuous-mode scanning.
+- Up to three saved Wi-Fi profiles (WPA2-Personal, SSID and password). The node connects to the strongest visible known network. Enterprise networks such as eduroam are not supported.
 - Wi-Fi stays connected while BLE scans. The C6 has one 2.4 GHz radio shared by coexistence arbitration, which can cost scan packets during transfers. Verify on hardware by comparing counts with and without Wi-Fi traffic.
 - Build with PlatformIO. Keep every module a self-contained library under `firmware/lib/` so it also compiles in the Arduino IDE.
 
@@ -32,7 +33,7 @@ firmware/
   platformio.ini
   src/main.cpp        creates the tasks; no logic beyond orchestration
   lib/
-    Config/           parameter registry (arduinoConfig-style) + NVS persistence
+    Config/           parameter registry (own implementation, modeled on arduinoConfig) + NVS persistence
     Cli/              serial commands (arduinoCmdProc)
     Scanner/          BLE scan, windowed counting, salted hashing
     Sensors/          ISensor interface; BME280, BH1750 implementations
@@ -54,25 +55,25 @@ Always on, two FreeRTOS tasks (the C6 is single-core, so they are time-sliced):
 Config is shared through a mutex. The worker takes a snapshot at the start of each cycle, so a change applies on the next cycle. Wi-Fi settings changed from the CLI make the worker reconnect.
 
 Worker cycle:
-1. Snapshot config; make sure Wi-Fi is connected (retry with backoff, never block the CLI).
+1. Snapshot config; make sure Wi-Fi is connected to one of the saved profiles, strongest visible first (retry with backoff, never block the CLI).
 2. BLE scan for `scan_window_s`.
-3. Hash each address with the daily salt, count unique hashes, count those above `rssi_min`, compute average RSSI. Discard raw addresses.
+3. Hash each address with a fresh random salt generated for this window, count unique hashes, count those above `rssi_min`, compute average RSSI. Discard raw addresses.
 4. Read BME280 and BH1750.
 5. Build the JSON payload (see "Payload").
-6. Send with the transport selected by config. If sending fails, keep a bounded queue of recent readings in RAM and send them after reconnecting.
+6. Send with the transport selected by config. If sending fails, keep a bounded queue of recent readings in RAM and send them after reconnecting, each with its age in seconds.
 7. Pause `scan_pause_s`.
 
-Time comes from NTP over the always-on Wi-Fi. It provides reading timestamps and the date for the daily salt. Until the first sync, use a boot-random salt and do not send readings.
+The node has no clock source. The backend timestamps each reading on receipt, and a queued reading carries `age_s` (seconds since it was measured) so the backend can compute the measurement time.
 
 ## Configuration and CLI
 
-Reference implementations by the supervisor, which constrain the design:
-- https://github.com/djherceg/arduinoConfig (GPL-3.0): parameters are registered as "pins" with id, name, variable, type, mode and change callback. Its binary command format is undocumented in the README; read `src/` and `include/` before defining the format.
-- https://github.com/djherceg/arduinoCmdProc (MIT): forward-only command and argument parser. Its README has no API detail; read `src/`, `include/` and `examples/`.
+The supervisor's libraries:
+- https://github.com/djherceg/arduinoConfig (GPL-3.0): marked outdated by its author (`docs/readme.txt`, 5.8.2025). Not a dependency, and no code is copied from it. Our own registry in `Config/` follows its design: parameters with a name, type, value variable and change callback. It has no persistence, so NVS storage is ours. From reading the source: its include names differ in case from the real file names (fails to build on Linux) and the repo is a PlatformIO app, not a library.
+- https://github.com/djherceg/arduinoCmdProc (MIT, current): a dependency of the `Cli` library only, used for tokenizing and integer/string parsing. Its README has no API detail; read `src/` and `examples/`. Avoid its float parser, range-check parsed integers (it does not detect overflow), and note that an empty `""` argument is dropped.
 
-License: AGPL-3.0 for the whole project, with a single `LICENSE` file in the repository root (AGPL-3.0 can be combined with the GPL-3.0 arduinoConfig). No per-file license headers or SPDX lines. Never modify or strip license notices in third-party code. To be confirmed with the supervisor.
+License: AGPL-3.0 for the whole project, with a single `LICENSE` file in the repository root (arduinoCmdProc is MIT, which is compatible). No per-file license headers or SPDX lines. Never modify or strip license notices in third-party code. To be confirmed with the supervisor.
 
-Config parameters: `device_id`, `wifi_ssid`, `wifi_pass`, `transport` (`http` or `mqtt`), `endpoint_url`, `mqtt_host`, `mqtt_topic`, `scan_window_s`, `scan_pause_s`, `rssi_min`.
+Config parameters: `device_id`, `wifi0_ssid`, `wifi0_pass`, `wifi1_ssid`, `wifi1_pass`, `wifi2_ssid`, `wifi2_pass` (an empty SSID means an unused slot), `transport` (`http` or `mqtt`), `endpoint_url`, `mqtt_host`, `mqtt_topic`, `scan_window_s`, `scan_pause_s`, `rssi_min`.
 
 CLI commands: `list`, `get <name>`, `set <name> <value>`, `save`, `reset`, `status`, `reboot`. Every parameter change must be persisted to NVS through the change callback or an explicit `save`.
 
@@ -80,7 +81,7 @@ CLI commands: `list`, `get <name>`, `set <name> <value>`, `save`, `reset`, `stat
 
 One JSON object per reading, identical for HTTP and MQTT. No formal schema yet; the format is not frozen. Before implementing the backend endpoint, propose the fields and confirm them, then keep firmware and backend in sync.
 
-Intended contents: node identifier, measurement time, scan window length, number of detected devices (unique salted hashes), number above the RSSI threshold, average RSSI, and optionally temperature, humidity and illuminance.
+Intended contents: node identifier, `boot_id` (random per boot) and `seq` (counter per boot), which together with the node identifier form a duplicate-detection key for retried sends, age of the reading in seconds (0 when sent immediately; the backend assigns the receive time), scan window length, number of detected devices (unique salted hashes), number above the RSSI threshold, average RSSI, and optionally temperature, humidity and illuminance.
 
 Proposed addition, to confirm: counts at a fixed set of RSSI thresholds (a sweep, aggregate only), so the threshold can be chosen offline per site without reflashing.
 
@@ -102,7 +103,7 @@ Proposed addition, to confirm: counts at a fixed set of RSSI thresholds (a sweep
 ## Privacy rules (hard constraints)
 
 - Never store or transmit raw MAC addresses or any per-device identifier.
-- Hash with a salt that rotates daily; keep hashes in RAM only for the duration of one window.
+- Hash with a fresh random salt for every scan window; the salt is never stored or sent and is wiped with the hashes at the end of the window. This is stricter than daily rotation and needs no clock.
 - No cameras.
 - MAC randomization is a known core limitation. Do not hide it; it is documented in the methodology.
 
@@ -123,4 +124,4 @@ Do one step at a time and stop for review after each.
 - Code: clean, self-documenting, readable, maintainable and reusable. Prefer clear names and small functions over comments. Comment only when necessary (the why, a non-obvious constraint), never to narrate what the code does, and keep comments short and plain.
 - Git: never run git write operations (add, commit, push, branch, remote, reset, etc.) unless explicitly asked for that specific operation. Never commit automatically.
 - Commit messages: a single conventional-commit header only (`type(scope): summary`), no body, no trailers. Never add `Co-Authored-By` or any other attribution line.
-- Surface unresolved decisions instead of assuming defaults. Currently open: whether Azure is mandatory, whether ToF ground truth stays in scope, exact config format and CLI command set (depends on the supervisor's libraries), whether readings while offline are queued in RAM only or also persisted, and the size of that queue.
+- Surface unresolved decisions instead of assuming defaults. Currently open: whether Azure is mandatory, whether ToF ground truth stays in scope, exact config format and CLI command set (depends on the supervisor's libraries), whether readings while offline are queued in RAM only or also persisted, and the size of that queue, how Wi-Fi profiles are managed from the CLI (`set wifiN_*` or dedicated `wifi add/del/list` commands).
