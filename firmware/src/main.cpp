@@ -14,17 +14,9 @@ Cli serialCli(config);
 Scanner scanner;
 
 void printResult(const ScanResult& result, int8_t rssiMin) {
-  char line[192];
-  int length = snprintf(line, sizeof(line),
-                        "window %us: devices %u, above %d dBm %u, avg rssi %d |",
-                        result.windowS, result.uniqueDevices, rssiMin,
-                        result.uniqueDevicesAboveRssi, result.avgRssi);
-  for (size_t i = 0; i < kSweepSize && length < static_cast<int>(sizeof(line));
-       i++) {
-    length += snprintf(line + length, sizeof(line) - length, " %d:%u",
-                       kSweepRssi[i], result.sweepCounts[i]);
-  }
-  Serial.println(line);
+  Serial.printf("window %us: devices %u, above %d dBm %u, avg rssi %d\n",
+                result.windowS, result.uniqueDevices, rssiMin,
+                result.uniqueDevicesAboveRssi, result.avgRssi);
 }
 
 void cliTask(void*) {

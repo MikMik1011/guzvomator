@@ -12,9 +12,6 @@ void test_empty_window_is_all_zero() {
   TEST_ASSERT_EQUAL_UINT16(0, result.uniqueDevices);
   TEST_ASSERT_EQUAL_UINT16(0, result.uniqueDevicesAboveRssi);
   TEST_ASSERT_EQUAL_INT8(0, result.avgRssi);
-  for (size_t i = 0; i < kSweepSize; i++) {
-    TEST_ASSERT_EQUAL_UINT16(0, result.sweepCounts[i]);
-  }
 }
 
 void test_repeated_hash_counts_once_with_mean_rssi() {
@@ -35,19 +32,6 @@ void test_threshold_uses_per_device_mean() {
   TEST_ASSERT_EQUAL_UINT16(1, window.summarize(-70).uniqueDevicesAboveRssi);
   TEST_ASSERT_EQUAL_UINT16(2, window.summarize(-90).uniqueDevicesAboveRssi);
   TEST_ASSERT_EQUAL_UINT16(0, window.summarize(-50).uniqueDevicesAboveRssi);
-}
-
-void test_sweep_counts_are_cumulative() {
-  WindowAggregator window;
-  window.add(1, -60);
-  window.add(2, -90);
-  const ScanResult result = window.summarize(-80);
-
-  TEST_ASSERT_EQUAL_INT8(-70, kSweepRssi[0]);
-  TEST_ASSERT_EQUAL_UINT16(1, result.sweepCounts[0]);  // >= -70
-  TEST_ASSERT_EQUAL_UINT16(1, result.sweepCounts[3]);  // >= -85
-  TEST_ASSERT_EQUAL_UINT16(2, result.sweepCounts[4]);  // >= -90
-  TEST_ASSERT_EQUAL_UINT16(2, result.sweepCounts[5]);  // >= -95
 }
 
 void test_average_is_mean_of_device_means() {
@@ -71,7 +55,6 @@ int main() {
   RUN_TEST(test_empty_window_is_all_zero);
   RUN_TEST(test_repeated_hash_counts_once_with_mean_rssi);
   RUN_TEST(test_threshold_uses_per_device_mean);
-  RUN_TEST(test_sweep_counts_are_cumulative);
   RUN_TEST(test_average_is_mean_of_device_means);
   RUN_TEST(test_clear_resets_window);
   return UNITY_END();
