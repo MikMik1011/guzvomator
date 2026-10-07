@@ -40,7 +40,7 @@ Sistem se sastoji od senzorskog čvora, dva izmenljiva načina slanja i backend-
 
 ESP32 uređaj periodično skenira BLE, lokalno obrađuje rezultate i šalje samo agregirane podatke. Jedan zapis sadrži:
 
-- identifikator senzorskog čvora i vreme merenja;
+- identifikator senzorskog čvora, identifikator pokretanja i redni broj zapisa (za otkrivanje duplikata pri ponovnom slanju) i starost zapisa u sekundama (vreme prijema dodeljuje backend);
 - broj detektovanih uređaja i broj uređaja čiji RSSI prelazi definisani prag;
 - prosečan RSSI i trajanje perioda skeniranja;
 - temperaturu, vlažnost vazduha i osvetljenost.
@@ -69,24 +69,24 @@ Senzorski čvor je Seeed Studio XIAO ESP32-C6 [3]. Ploča ima integrisan BLE i W
 
 - XIAO ESP32-C6 kao senzorski čvor, USB napajanje; uređaj je stalno uključen;
 - BME280 (temperatura i vlažnost vazduha) i BH1750 (osvetljenost) preko I2C, kao ambijentalni kontekst uz procenu zauzetosti;
-- Wi-Fi konekcija za slanje podataka.
+- Wi-Fi konekcija za slanje podataka, uz do tri sačuvana profila mreže (SSID i lozinka, WPA2-Personal); uređaj se povezuje na najjaču vidljivu poznatu mrežu.
 
 **Ciklus firmvera**
 
 Uređaj radi stalno, bez dubokog sna. Firmver koristi dva FreeRTOS taska: task komandne linije (čita serijski port i menja konfiguraciju) i radni task koji stalno ponavlja sledeći ciklus. Konfiguracija se deli preko muteksa, a radni task je na početku svakog ciklusa preuzima, pa se izmena primenjuje u sledećem ciklusu.
 
-1. Učitavanje konfiguracije iz trajne memorije (NVS) pri pokretanju; na početku svakog ciklusa provera da je Wi-Fi povezan (ponovni pokušaji bez blokiranja komandne linije).
+1. Učitavanje konfiguracije iz trajne memorije (NVS) pri pokretanju; na početku svakog ciklusa provera da je Wi-Fi povezan na jedan od sačuvanih profila, počevši od najjačeg vidljivog (ponovni pokušaji bez blokiranja komandne linije).
 2. BLE skeniranje u prozoru zadatog trajanja. Wi-Fi ostaje povezan tokom skeniranja. ESP32-C6 ima jedan 2,4 GHz radio koji BLE i Wi-Fi dele vremenskom podelom (koegzistencija), pa prenos može da utiče na broj uhvaćenih paketa. Ovo treba proveriti u praksi poređenjem broja detektovanih uređaja sa Wi-Fi saobraćajem i bez njega. Wi-Fi probe zahtevi su eventualni dodatni izvor.
-3. Heširanje adresa uređaja, brojanje jedinstvenih heševa, RSSI filtriranje, odbacivanje sirovih adresa iz RAM-a.
+3. Heširanje adresa uređaja novom nasumičnom solju generisanom za taj prozor, brojanje jedinstvenih heševa, RSSI filtriranje, odbacivanje sirovih adresa iz RAM-a.
 4. Očitavanje BME280 i BH1750.
-5. Slanje agregiranog zapisa preko odabranog transporta. Ako slanje ne uspe, ograničen broj poslednjih zapisa čuva se u RAM-u i šalje po ponovnom povezivanju.
+5. Slanje agregiranog zapisa preko odabranog transporta. Ako slanje ne uspe, ograničen broj poslednjih zapisa čuva se u RAM-u i šalje po ponovnom povezivanju, svaki sa svojom starošću u sekundama.
 6. Kratka pauza do sledećeg ciklusa.
 
-Tačno vreme se dobija preko NTP-a putem stalno povezanog Wi-Fi-ja i koristi se za vremenske oznake zapisa i za dnevnu promenu soli.
+Čvor nema izvor tačnog vremena i ne koristi NTP. Vreme prijema svakom zapisu dodeljuje backend, a zapis iz reda čekanja nosi svoju starost u sekundama, pa se vreme merenja može izračunati.
 
 **Konfiguracija i komandna linija**
 
-Parametri (identifikator uređaja, Wi-Fi podaci, tip transporta i adresa, trajanje prozora skeniranja, interval, RSSI prag) registruju se kao konfiguracioni parametri po uzoru na biblioteku arduinoConfig [6] i trajno čuvaju u NVS-u. Podešavanje se vrši preko serijske komandne linije zasnovane na arduinoCmdProc [7] (komande poput `list`, `get`, `set`, `save`, `reset`, `status`). Tačan format konfiguracije i skup komandi biće usklađeni sa ovim bibliotekama. Web portal za konfiguraciju nije deo osnovnog obima.
+Parametri (identifikator uređaja, do tri Wi-Fi profila, tip transporta i adresa, trajanje prozora skeniranja, interval, RSSI prag) registruju se kao konfiguracioni parametri po uzoru na dizajn biblioteke arduinoConfig [6] i trajno čuvaju u NVS-u. Autor je biblioteku arduinoConfig označio kao zastarelu, pa se ona ne koristi kao zavisnost, već se implementira sopstveni registar parametara sa istim konceptom (naziv, tip, promenljiva i povratni poziv pri izmeni); trajno čuvanje je deo sopstvene implementacije. Podešavanje se vrši preko serijske komandne linije zasnovane na arduinoCmdProc [7] (komande poput `list`, `get`, `set`, `save`, `reset`, `status`). Tačan skup komandi biće usklađen sa bibliotekom arduinoCmdProc. Web portal za konfiguraciju nije deo osnovnog obima.
 
 **Opciona proširenja**
 
@@ -121,7 +121,7 @@ Način kalibracije (na primer regresija nad prikupljenim podacima) određuje se 
 
 ## 7 Privatnost i ograničenja
 
-Obrada identifikatora uređaja vrši se lokalno na ESP32 čvoru. Adrese se heširaju solju koja se menja svakog dana (datum se dobija preko NTP-a), čuvaju se samo u RAM-u tokom prozora skeniranja i odbacuju posle brojanja. Centralnom sistemu se šalju samo agregirani podaci, bez adresa ili drugih podataka koji bi omogućili dugoročno praćenje pojedinačnih uređaja. Kamere se ne koriste.
+Obrada identifikatora uređaja vrši se lokalno na ESP32 čvoru. Adrese se heširaju nasumičnom solju koja se generiše iznova za svaki prozor skeniranja (strože od dnevne promene i bez potrebe za satom); so se ne čuva niti šalje, a heševi se čuvaju samo u RAM-u tokom prozora skeniranja i odbacuju zajedno sa solju posle brojanja. Centralnom sistemu se šalju samo agregirani podaci, bez adresa ili drugih podataka koji bi omogućili dugoročno praćenje pojedinačnih uređaja. Kamere se ne koriste.
 
 Pre postavljanja sistema u stvaran prostor potrebna je dozvola fakulteta za postavljanje senzora, uz proveru dodatnih zahteva u vezi sa privatnošću.
 
@@ -133,7 +133,7 @@ Pre postavljanja sistema u stvaran prostor potrebna je dozvola fakulteta za post
 | --- | --- |
 | Edge uređaj | Seeed Studio XIAO ESP32-C6, PlatformIO, Arduino framework |
 | Senzori | BLE skeniranje (Wi-Fi opciono), BME280, BH1750 |
-| Konfiguracija | arduinoConfig, trajno čuvanje u NVS-u, serijska komandna linija (arduinoCmdProc) |
+| Konfiguracija | sopstveni registar parametara po uzoru na arduinoConfig, trajno čuvanje u NVS-u, serijska komandna linija (arduinoCmdProc) |
 | Transport | HTTPS POST (JSON) ili MQTT, biranje u konfiguraciji |
 | MQTT broker | Eclipse Mosquitto (opciono) |
 | Backend | REST endpoint, FastAPI (self-hosted); ista logika prenosiva u Azure Function |
