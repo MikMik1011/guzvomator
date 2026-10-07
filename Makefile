@@ -2,3 +2,6 @@
 
 build upload monitor flash test clean:
 	$(MAKE) -C firmware $@
+
+backend-%:
+	$(MAKE) -C backend $*
