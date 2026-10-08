@@ -79,7 +79,7 @@ Uređaj radi stalno, bez dubokog sna. Firmver koristi tri FreeRTOS taska: task k
 2. BLE skeniranje u prozoru zadatog trajanja. Wi-Fi ostaje povezan tokom skeniranja. ESP32-C6 ima jedan 2,4 GHz radio koji BLE i Wi-Fi dele vremenskom podelom (koegzistencija), pa prenos može da utiče na broj uhvaćenih paketa. Ovo treba proveriti u praksi poređenjem broja detektovanih uređaja sa Wi-Fi saobraćajem i bez njega. Wi-Fi probe zahtevi su eventualni dodatni izvor.
 3. Heširanje adresa uređaja novom nasumičnom solju generisanom za taj prozor, brojanje jedinstvenih heševa, RSSI filtriranje, odbacivanje sirovih adresa iz RAM-a.
 4. Očitavanje BME280 i BH1750.
-5. Slanje agregiranog zapisa preko odabranog transporta. Ako slanje ne uspe, ograničen broj poslednjih zapisa čuva se u RAM-u i šalje po ponovnom povezivanju, svaki sa svojim vremenom merenja.
+5. Slanje agregiranog zapisa preko odabranog transporta. Ako slanje ne uspe, ograničen broj poslednjih zapisa čuva se u RAM-u i šalje po ponovnom povezivanju, svaki sa svojim vremenom merenja. Red čekanja čuva do 20 zapisa u RAM-u (najstariji se odbacuje kada se popuni) i šalje ih od najstarijeg. Zapis koji backend odbije kao nevažeći (HTTP 400) odbacuje se zauvek, a za sve ostale greške (mreža, istek vremena, greška servera, pogrešan ključ ili adresa) zapis ostaje u redu, a ponovno slanje ide sa rastućim razmakom od 5 do 60 sekundi.
 6. Kratka pauza do sledećeg ciklusa.
 
 Čvor sinhronizuje sat preko NTP-a i koristi ga za proveru datuma važenja TLS sertifikata pri HTTPS komunikaciji i za vremenske oznake zapisa (UTC). Sat nastavlja da radi i kada Wi-Fi privremeno nestane, a ponovo se sinhronizuje po povratku mreže. Backend dodatno čuva sopstveno vreme prijema zapisa, radi dijagnostike. Jedinstveni ključ zapisa je kombinacija identifikatora čvora i vremena merenja, pa je ponovno slanje istog zapisa bezbedno.
@@ -141,7 +141,7 @@ Pre postavljanja sistema u stvaran prostor potrebna je dozvola fakulteta za post
 | Pristup podacima | REST API, izvoz u CSV/JSON za analizu |
 | Deployment | Docker Compose na sopstvenom serveru ili VPS-u; Azure Functions kao alternativa |
 
-Uređaj šalje isti JSON zapis bez obzira na transport, pa backend ne zavisi od izabranog načina slanja. Web dashboard nije deo obima ovog rada; podaci su dostupni preko REST API-ja i mogu se prikazati bilo kojim klijentom.
+Uređaj šalje isti JSON zapis bez obzira na transport, pa backend ne zavisi od izabranog načina slanja. Kod HTTPS-a čvor proverava serverski sertifikat ugrađenom listom javnih korenskih sertifikata (na primer Let's Encrypt iza obrnutog proksija na VPS-u), pa je za to potreban ispravan sat. Web dashboard nije deo obima ovog rada; podaci su dostupni preko REST API-ja i mogu se prikazati bilo kojim klijentom.
 
 Sistem može da radi kao samostalna self-hosted instanca ili uz Azure servise, bez vezivanja osnovne funkcionalnosti za konkretnog cloud vendor-a.
 
