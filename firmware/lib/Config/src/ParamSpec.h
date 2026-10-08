@@ -5,7 +5,7 @@
 #include "Config.h"
 
 enum class ParamType : uint8_t { Text, UInt16, Int8 };
-enum class TextRule : uint8_t { Any, Identifier, Url, Transport };
+enum class TextRule : uint8_t { Any, Identifier, Hostname, Url, Transport };
 
 struct ParamSpec {
   const char* name;

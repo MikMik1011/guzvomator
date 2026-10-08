@@ -1,11 +1,11 @@
 #pragma once
 #include <stddef.h>
-#include <stdint.h>
 
-#include "ISensor.h"
-#include "ScanResult.h"
+#include "Reading.h"
 
-// Returns bytes written (excluding NUL), or 0 if buf is too small.
-size_t buildPayload(char* buf, size_t cap, const char* deviceId,
-                    uint32_t timestamp, const ScanResult& scan,
-                    const EnvReading& env);
+constexpr int kPayloadVersion = 1;
+constexpr size_t kMaxPayloadLen = 256;
+
+// Writes the JSON for one reading and returns its length, excluding the NUL.
+// Returns 0 if buf is too small or the device id is not a plain identifier.
+size_t buildPayload(const Reading& reading, char* buf, size_t cap);

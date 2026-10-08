@@ -5,26 +5,29 @@
 
 #include <memory>
 
+#include "LineBuffer.h"
+
 namespace CmdProc {
 class Proc;
 }
 
+class Uplink;
+class Reporter;
+
 class Cli {
  public:
-  explicit Cli(DeviceConfig& config);
+  Cli(DeviceConfig& config, Uplink& uplink, const Reporter& reporter);
   ~Cli();
 
   void begin();
   void poll();  // non-blocking
 
  private:
-  static constexpr size_t kLineCapacity = 192;
-
   void handleLine();
 
   DeviceConfig& config_;
+  Uplink& uplink_;
+  const Reporter& reporter_;
   std::unique_ptr<CmdProc::Proc> proc_;
-  char line_[kLineCapacity];
-  size_t length_ = 0;
-  bool overflowed_ = false;
+  LineBuffer line_;
 };

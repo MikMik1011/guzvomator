@@ -3,6 +3,7 @@ export
 
 DB_PORT ?= 15432
 API_PORT ?= 8000
+API_HOST ?= 127.0.0.1
 
 COMPOSE_DEV = docker compose -f docker-compose.yml -f docker-compose.dev.yml
 
@@ -27,7 +28,7 @@ dev-db:
 
 dev: dev-db
 	DATABASE_URL=postgresql://guzvo:$(POSTGRES_PASSWORD)@localhost:$(DB_PORT)/guzvomator \
-		uv run uvicorn app.api:app --reload --host 127.0.0.1 --port $(API_PORT)
+		uv run uvicorn app.api:app --reload --host $(API_HOST) --port $(API_PORT)
 
 dev-down:
 	$(COMPOSE_DEV) down

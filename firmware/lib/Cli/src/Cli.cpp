@@ -1,7 +1,10 @@
 #include "Cli.h"
 
 #include <Arduino.h>
+#include <Reporter.h>
+#include <Uplink.h>
 #include <cmdProc.h>
+#include <time.h>
 
 #include <ParamSpec.h>
 
@@ -12,6 +15,8 @@ constexpr const char* kMaskedSecret = "****";
 // CmdProc callbacks are plain function pointers, so they reach the config and
 // report errors through these.
 DeviceConfig* config = nullptr;
+Uplink* uplink = nullptr;
+const Reporter* reporter = nullptr;
 const char* lastError = nullptr;
 
 int fail(const char* message) {
@@ -19,9 +24,44 @@ int fail(const char* message) {
   return CMDPROC_ERR_INVALIDVALUE;
 }
 
+bool isPlainText(const char* text) {
+  const size_t length = strlen(text);
+  if (length > 0 && (text[0] == ' ' || text[length - 1] == ' ')) return false;
+  for (const char* c = text; *c != '\0'; c++) {
+    const unsigned char byte = *c;
+    if (byte < 0x20 || byte > 0x7e || byte == '"' || byte == '\\') return false;
+  }
+  return true;
+}
+
+// Plain text is printed as is. Anything with hidden characters is quoted and
+// escaped, so a stray space or look-alike character shows up.
+void printText(const char* text) {
+  if (isPlainText(text)) {
+    Serial.print(text);
+    return;
+  }
+  Serial.print('"');
+  for (const char* c = text; *c != '\0'; c++) {
+    const unsigned char byte = *c;
+    if (byte >= 0x20 && byte <= 0x7e && byte != '"' && byte != '\\') {
+      Serial.write(byte);
+    } else {
+      Serial.printf("\\x%02x", byte);
+    }
+  }
+  Serial.print('"');
+}
+
 void printParam(const ParamSpec& spec, const char* value) {
   const bool masked = spec.secret && value[0] != '\0';
-  Serial.printf("%s=%s\n", spec.name, masked ? kMaskedSecret : value);
+  Serial.printf("%s=", spec.name);
+  if (masked) {
+    Serial.print(kMaskedSecret);
+  } else {
+    printText(value);
+  }
+  Serial.println();
 }
 
 int cmdList(CmdProc::Proc&) {
@@ -64,7 +104,62 @@ int cmdReset(CmdProc::Proc&) {
   return 0;
 }
 
+void printNetworkStatus() {
+  const Uplink::Status status = uplink->status();
+
+  if (status.connected) {
+    Serial.printf("wifi=connected\nwifi_ssid=%s\nwifi_rssi=%d\nip=%s\n",
+                  status.ssid, static_cast<int>(status.rssi), status.ip);
+  } else {
+    Serial.println("wifi=disconnected");
+  }
+
+  Serial.printf("clock=%s\n", status.clockSynced ? "synced" : "not synced");
+  if (!status.clockSynced) return;
+
+  const time_t epoch = status.epoch;
+  struct tm utc;
+  gmtime_r(&epoch, &utc);
+  char text[24];
+  strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%SZ", &utc);
+  Serial.printf("time_utc=%s\n", text);
+}
+
+int cmdWifiScan(CmdProc::Proc&) {
+  constexpr size_t kMaxListed = 24;
+  Uplink::VisibleNetwork networks[kMaxListed];
+
+  Serial.println("scanning, this takes a few seconds");
+  const int count = uplink->scanVisible(networks, kMaxListed);
+  if (count == Uplink::kScanBusy) return fail("busy connecting, try again");
+  if (count == Uplink::kScanFailed) return fail("scan failed");
+
+  for (int i = 0; i < count; i++) {
+    const Uplink::VisibleNetwork& network = networks[i];
+    Serial.printf("%4d dBm  ch %-2u  %-10s ", static_cast<int>(network.rssi),
+                  static_cast<unsigned>(network.channel), network.security);
+    if (network.ssid[0] != '\0') {
+      printText(network.ssid);
+    } else {
+      Serial.print("(hidden)");
+    }
+    Serial.println(network.saved ? "  [saved]" : "");
+  }
+  Serial.printf("networks=%d\n", count);
+  return 0;
+}
+
+void printDeliveryStatus() {
+  Serial.printf("queued=%u\nsent=%lu\nrejected=%lu\ndropped=%lu\n",
+                static_cast<unsigned>(reporter->queued()),
+                static_cast<unsigned long>(reporter->stats().sent),
+                static_cast<unsigned long>(reporter->stats().rejected),
+                static_cast<unsigned long>(reporter->stats().dropped));
+}
+
 int cmdStatus(CmdProc::Proc&) {
+  printNetworkStatus();
+  printDeliveryStatus();
   Serial.printf("unsaved=%s\n", config->hasUnsavedChanges() ? "yes" : "no");
   Serial.printf("config_version=%lu\n",
                 static_cast<unsigned long>(config->version()));
@@ -88,6 +183,7 @@ int cmdHelp(CmdProc::Proc&) {
   Serial.println("save                  write changes to flash");
   Serial.println("reset                 restore defaults and erase flash");
   Serial.println("status                show runtime state");
+  Serial.println("wifi_scan             list visible Wi-Fi networks");
   Serial.println("reboot                restart the device");
   return 0;
 }
@@ -107,15 +203,21 @@ const char* describeError(int code) {
 
 }  // namespace
 
-Cli::Cli(DeviceConfig& deviceConfig)
-    : config_(deviceConfig), proc_(new CmdProc::Proc) {}
+Cli::Cli(DeviceConfig& deviceConfig, Uplink& uplinkRef,
+         const Reporter& reporterRef)
+    : config_(deviceConfig),
+      uplink_(uplinkRef),
+      reporter_(reporterRef),
+      proc_(new CmdProc::Proc) {}
 
 Cli::~Cli() = default;
 
 void Cli::begin() {
   config = &config_;
+  uplink = &uplink_;
+  reporter = &reporter_;
 
-  proc_->Init(8);
+  proc_->Init(9);
   proc_->Add("list", cmdList, 1, 1);
   proc_->Add("get", cmdGet, 2, 2);
   proc_->Add("set", cmdSet, 2, 3);
@@ -123,37 +225,28 @@ void Cli::begin() {
   proc_->Add("reset", cmdReset, 1, 1);
   proc_->Add("status", cmdStatus, 1, 1);
   proc_->Add("reboot", cmdReboot, 1, 1);
+  proc_->Add("wifi_scan", cmdWifiScan, 1, 1);
   proc_->Add("help", cmdHelp, 1, 1);
 }
 
 void Cli::poll() {
   while (Serial.available()) {
-    const char c = Serial.read();
-    if (c == '\r') continue;
-
-    if (c != '\n') {
-      if (length_ < kLineCapacity - 1) {
-        line_[length_++] = c;
-      } else {
-        overflowed_ = true;
-      }
-      continue;
+    switch (line_.feed(Serial.read())) {
+      case LineBuffer::Event::LineReady:
+        handleLine();
+        break;
+      case LineBuffer::Event::TooLong:
+        Serial.println("ERR line too long");
+        break;
+      case LineBuffer::Event::None:
+        break;
     }
-
-    if (overflowed_) {
-      Serial.println("ERR line too long");
-    } else if (length_ > 0) {
-      line_[length_] = '\0';
-      handleLine();
-    }
-    length_ = 0;
-    overflowed_ = false;
   }
 }
 
 void Cli::handleLine() {
   lastError = nullptr;
-  const int code = proc_->Parse(line_);
+  const int code = proc_->Parse(line_.text());
 
   if (code == 0) {
     Serial.println("OK");
