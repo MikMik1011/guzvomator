@@ -73,9 +73,9 @@ Senzorski čvor je Seeed Studio XIAO ESP32-C6 [3]. Ploča ima integrisan BLE i W
 
 **Ciklus firmvera**
 
-Uređaj radi stalno, bez dubokog sna. Firmver koristi dva FreeRTOS taska: task komandne linije (čita serijski port i menja konfiguraciju) i radni task koji stalno ponavlja sledeći ciklus. Konfiguracija se deli preko muteksa, a radni task je na početku svakog ciklusa preuzima, pa se izmena primenjuje u sledećem ciklusu.
+Uređaj radi stalno, bez dubokog sna. Firmver koristi tri FreeRTOS taska: task komandne linije (čita serijski port i menja konfiguraciju), mrežni task koji održava Wi-Fi vezu i sinhronizaciju sata (ponovni pokušaji sa rastućim razmakom od 5 do 60 sekundi, pa povezivanje ne usporava ni komandnu liniju ni skeniranje) i radni task koji stalno ponavlja sledeći ciklus. Konfiguracija se deli preko muteksa, a radni task je na početku svakog ciklusa preuzima, pa se izmena primenjuje u sledećem ciklusu; mrežni task primenjuje izmenu Wi-Fi i NTP podešavanja čim se konfiguracija sačuva.
 
-1. Učitavanje konfiguracije iz trajne memorije (NVS) pri pokretanju; na početku svakog ciklusa provera da je Wi-Fi povezan na jedan od sačuvanih profila, počevši od najjačeg vidljivog (ponovni pokušaji bez blokiranja komandne linije); merenje počinje tek posle prve sinhronizacije sata preko NTP-a.
+1. Učitavanje konfiguracije iz trajne memorije (NVS) pri pokretanju; Wi-Fi veza sa jednim od sačuvanih profila (počevši od najjačeg vidljivog) održava se u posebnom mrežnom tasku; merenje počinje tek posle prve sinhronizacije sata preko NTP-a.
 2. BLE skeniranje u prozoru zadatog trajanja. Wi-Fi ostaje povezan tokom skeniranja. ESP32-C6 ima jedan 2,4 GHz radio koji BLE i Wi-Fi dele vremenskom podelom (koegzistencija), pa prenos može da utiče na broj uhvaćenih paketa. Ovo treba proveriti u praksi poređenjem broja detektovanih uređaja sa Wi-Fi saobraćajem i bez njega. Wi-Fi probe zahtevi su eventualni dodatni izvor.
 3. Heširanje adresa uređaja novom nasumičnom solju generisanom za taj prozor, brojanje jedinstvenih heševa, RSSI filtriranje, odbacivanje sirovih adresa iz RAM-a.
 4. Očitavanje BME280 i BH1750.

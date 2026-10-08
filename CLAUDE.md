@@ -25,6 +25,7 @@ Out of scope unless explicitly requested: web dashboard, InfluxDB, ToF ground-tr
 - SNTP provides the clock, used for TLS certificate validation and for reading timestamps. The server defaults to `pool.ntp.org` and is configurable (`ntp_server`). HTTPS verifies the server certificate. Which root certificate(s) to embed, or whether to use the ESP32 certificate bundle, is open. Plain HTTP is allowed for local development.
 - Up to three saved Wi-Fi profiles (WPA2-Personal, SSID and password). The node connects to the strongest visible known network. Enterprise networks such as eduroam are not supported.
 - Wi-Fi stays connected while BLE scans. The C6 has one 2.4 GHz radio shared by coexistence arbitration, which can cost scan packets during transfers. Verify on hardware by comparing counts with and without Wi-Fi traffic.
+- The clock counts as synced only after SNTP set it in this boot. The ESP32 keeps its time across soft resets, so a stale time must not pass as synced.
 - Build with PlatformIO. Keep every module a self-contained library under `firmware/lib/` so it also compiles in the Arduino IDE.
 
 ## Repository layout
@@ -40,6 +41,7 @@ firmware/
     Sensors/          ISensor interface; BME280, BH1750 implementations
     Transport/        ITransport; HttpTransport, MqttTransport
     Payload/          serialization of readings to JSON
+    Net/              Uplink: Wi-Fi profiles with reconnect backoff, SNTP clock
 backend/
   app/                FastAPI service
   docker-compose.yml  backend + PostgreSQL
@@ -49,14 +51,17 @@ docs/
 
 ## Firmware runtime
 
-Always on, two FreeRTOS tasks (the C6 is single-core, so they are time-sliced):
+Always on, three FreeRTOS tasks (the C6 is single-core, so they are time-sliced):
 - CLI task: reads serial and edits config. Blocked on input most of the time.
+- Uplink task: keeps Wi-Fi connected to one of the saved profiles (strongest visible known network first, retry with backoff of 5 s doubling to 60 s) and runs SNTP. A reconnect can take several seconds, which is why it has its own task: it never delays the CLI or the scan.
 - Worker task: runs the measurement cycle below, repeatedly.
 
-Config is shared through a mutex. The worker takes a snapshot at the start of each cycle, so a change applies on the next cycle. Wi-Fi settings changed from the CLI make the worker reconnect.
+Config is shared through a mutex. The worker takes a snapshot at the start of each cycle, so a change applies on the next cycle. The uplink task reapplies Wi-Fi and NTP settings whenever the config version changes (after `save` or `reset`) and reconnects.
+
+The firmware uses the `huge_app.csv` partition table (3 MB application, no OTA), because Wi-Fi plus BLE no longer fits the default 1.25 MB. The NVS partition keeps its default offset and size.
 
 Worker cycle:
-1. Snapshot config; make sure Wi-Fi is connected to one of the saved profiles, strongest visible first (retry with backoff, never block the CLI), and that the clock has been synced at least once. No measurement starts before the first sync.
+1. Snapshot config and check that the clock has been synced at least once. No measurement starts before the first sync.
 2. BLE scan for `scan_window_s`.
 3. Hash each address with a fresh random salt generated for this window, count unique hashes, count those above `rssi_min`, compute average RSSI. Discard raw addresses.
 4. Read BME280 and BH1750.
@@ -76,7 +81,9 @@ License: AGPL-3.0 for the whole project, with a single `LICENSE` file in the rep
 
 Config parameters: `device_id`, `wifi0_ssid`, `wifi0_pass`, `wifi1_ssid`, `wifi1_pass`, `wifi2_ssid`, `wifi2_pass` (an empty SSID means an unused slot), `transport` (`http` or `mqtt`), `endpoint_url`, `api_key` (secret, masked in `list` and `get`), `mqtt_host`, `mqtt_topic`, `ntp_server`, `scan_window_s`, `scan_pause_s`, `rssi_min`.
 
-CLI commands: `list`, `get <name>`, `set <name> <value>`, `save`, `reset`, `status`, `reboot`. Every parameter change must be persisted to NVS through the change callback or an explicit `save`.
+CLI commands: `list`, `get <name>`, `set <name> [value]` (no value clears the field), `save`, `reset`, `status` (Wi-Fi, clock, unsaved changes, uptime, free heap), `reboot`, `wifi_scan` (lists visible networks with signal, channel and security; blocks for a few seconds and disturbs BLE scanning while it runs), `help`. Every parameter change must be persisted to NVS through the change callback or an explicit `save`.
+
+The CLI line editor (`LineBuffer`) acts on backspace and Delete, turns tabs into spaces, and skips arrow-key escape sequences, so editing keys never end up in a value. Text values containing control characters are rejected, including when loaded from NVS. `list`, `get` and `wifi_scan` print values that have leading or trailing spaces or non-ASCII bytes quoted with `\xNN` escapes, so hidden characters are visible.
 
 ## Payload
 
