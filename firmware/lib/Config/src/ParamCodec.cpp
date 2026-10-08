@@ -16,6 +16,14 @@ const uint8_t* fieldOf(const ConfigValues& values, const ParamSpec& spec) {
   return reinterpret_cast<const uint8_t*>(&values) + spec.offset;
 }
 
+bool hasControlCharacter(const char* text) {
+  for (const char* c = text; *c != '\0'; c++) {
+    const unsigned char byte = *c;
+    if (byte < 0x20 || byte == 0x7f) return true;
+  }
+  return false;
+}
+
 bool startsWith(const char* text, const char* prefix) {
   return strncmp(text, prefix, strlen(prefix)) == 0;
 }
@@ -86,6 +94,7 @@ SetStatus applyTextValue(const ParamSpec& spec, ConfigValues& values,
                          const char* text) {
   const size_t length = strlen(text);
   if (length >= spec.size) return SetStatus::TooLong;
+  if (hasControlCharacter(text)) return SetStatus::InvalidCharacters;
 
   const SetStatus rule = checkTextRule(spec.rule, text);
   if (rule != SetStatus::Ok) return rule;

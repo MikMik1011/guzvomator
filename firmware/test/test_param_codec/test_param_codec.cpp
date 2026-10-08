@@ -1,6 +1,8 @@
 #include <string.h>
 #include <unity.h>
 
+#include <initializer_list>
+
 #include "ParamCodec.h"
 
 void setUp() {}
@@ -95,6 +97,22 @@ void test_text_length_boundary() {
   TEST_ASSERT_EQUAL_STRING(ssid32, values.wifi[0].ssid);
   TEST_ASSERT_EQUAL(SetStatus::TooLong, apply("wifi0_ssid", values, ssid33));
   TEST_ASSERT_EQUAL_STRING(ssid32, values.wifi[0].ssid);
+}
+
+void test_control_characters_are_rejected_in_every_text_value() {
+  ConfigValues values;
+  for (const char* bad : {"p\bssid", "line\r", "tab\tbed", "esc\x1b[A", "del\x7f"}) {
+    TEST_ASSERT_EQUAL(SetStatus::InvalidCharacters, apply("wifi0_ssid", values, bad));
+    TEST_ASSERT_EQUAL(SetStatus::InvalidCharacters, apply("wifi0_pass", values, bad));
+    TEST_ASSERT_EQUAL(SetStatus::InvalidCharacters, apply("mqtt_topic", values, bad));
+  }
+  TEST_ASSERT_EQUAL_STRING("", values.wifi[0].ssid);
+}
+
+void test_non_ascii_text_is_still_allowed() {
+  ConfigValues values;
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("wifi0_ssid", values, "\xc5\xa1kola"));
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("wifi0_pass", values, "p\xc3\xa4ss word"));
 }
 
 void test_empty_text_clears_the_value() {
@@ -196,6 +214,8 @@ int main() {
   RUN_TEST(test_number_rejects_bad_input);
   RUN_TEST(test_failed_apply_leaves_value_unchanged);
   RUN_TEST(test_text_length_boundary);
+  RUN_TEST(test_control_characters_are_rejected_in_every_text_value);
+  RUN_TEST(test_non_ascii_text_is_still_allowed);
   RUN_TEST(test_empty_text_clears_the_value);
   RUN_TEST(test_wifi_slots_are_independent);
   RUN_TEST(test_only_passwords_and_the_api_key_are_secret);
