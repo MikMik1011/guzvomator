@@ -114,11 +114,36 @@ void test_wifi_slots_are_independent() {
   TEST_ASSERT_EQUAL_STRING("", values.wifi[2].ssid);
 }
 
-void test_only_wifi_passwords_are_secret() {
+void test_only_passwords_and_the_api_key_are_secret() {
   for (size_t i = 0; i < kParamCount; i++) {
-    const bool isPassword = strstr(kParams[i].name, "_pass") != nullptr;
-    TEST_ASSERT_EQUAL(isPassword, kParams[i].secret);
+    const bool isSecret = strstr(kParams[i].name, "_pass") != nullptr ||
+                          strcmp(kParams[i].name, "api_key") == 0;
+    TEST_ASSERT_EQUAL(isSecret, kParams[i].secret);
   }
+}
+
+void test_api_key_length_boundary() {
+  ConfigValues values;
+  char key64[65];
+  char key65[66];
+  memset(key64, 'k', 64);
+  key64[64] = '\0';
+  memset(key65, 'k', 65);
+  key65[65] = '\0';
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("api_key", values, key64));
+  TEST_ASSERT_EQUAL(SetStatus::TooLong, apply("api_key", values, key65));
+  TEST_ASSERT_EQUAL_STRING(key64, values.apiKey);
+}
+
+void test_ntp_server_rules() {
+  ConfigValues values;
+  expectFormatted("ntp_server", values, "pool.ntp.org");
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("ntp_server", values, "192.168.1.10"));
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("ntp_server", values, "time-a.example.org"));
+  TEST_ASSERT_EQUAL(SetStatus::InvalidFormat, apply("ntp_server", values, ""));
+  TEST_ASSERT_EQUAL(SetStatus::InvalidCharacters, apply("ntp_server", values, "bad host"));
+  TEST_ASSERT_EQUAL(SetStatus::InvalidCharacters, apply("ntp_server", values, "ntp://x"));
+  TEST_ASSERT_EQUAL_STRING("time-a.example.org", values.ntpServer);
 }
 
 void test_device_id_rules() {
@@ -173,7 +198,9 @@ int main() {
   RUN_TEST(test_text_length_boundary);
   RUN_TEST(test_empty_text_clears_the_value);
   RUN_TEST(test_wifi_slots_are_independent);
-  RUN_TEST(test_only_wifi_passwords_are_secret);
+  RUN_TEST(test_only_passwords_and_the_api_key_are_secret);
+  RUN_TEST(test_api_key_length_boundary);
+  RUN_TEST(test_ntp_server_rules);
   RUN_TEST(test_device_id_rules);
   RUN_TEST(test_transport_rules);
   RUN_TEST(test_url_rules);

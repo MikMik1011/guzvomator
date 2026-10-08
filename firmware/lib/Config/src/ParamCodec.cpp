@@ -30,6 +30,16 @@ SetStatus checkIdentifier(const char* text) {
   return SetStatus::Ok;
 }
 
+SetStatus checkHostname(const char* text) {
+  if (*text == '\0') return SetStatus::InvalidFormat;
+  for (const char* c = text; *c != '\0'; c++) {
+    const bool allowed =
+        isalnum(static_cast<unsigned char>(*c)) || *c == '-' || *c == '.';
+    if (!allowed) return SetStatus::InvalidCharacters;
+  }
+  return SetStatus::Ok;
+}
+
 SetStatus checkUrl(const char* text) {
   if (*text == '\0') return SetStatus::Ok;
   const bool valid = startsWith(text, "http://") || startsWith(text, "https://");
@@ -47,6 +57,8 @@ SetStatus checkTextRule(TextRule rule, const char* text) {
       return SetStatus::Ok;
     case TextRule::Identifier:
       return checkIdentifier(text);
+    case TextRule::Hostname:
+      return checkHostname(text);
     case TextRule::Url:
       return checkUrl(text);
     case TextRule::Transport:

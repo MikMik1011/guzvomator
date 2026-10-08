@@ -74,7 +74,7 @@ The supervisor's libraries:
 
 License: AGPL-3.0 for the whole project, with a single `LICENSE` file in the repository root (arduinoCmdProc is MIT, which is compatible). No per-file license headers or SPDX lines. Never modify or strip license notices in third-party code. To be confirmed with the supervisor.
 
-Config parameters: `device_id`, `wifi0_ssid`, `wifi0_pass`, `wifi1_ssid`, `wifi1_pass`, `wifi2_ssid`, `wifi2_pass` (an empty SSID means an unused slot), `transport` (`http` or `mqtt`), `endpoint_url`, `mqtt_host`, `mqtt_topic`, `ntp_server`, `scan_window_s`, `scan_pause_s`, `rssi_min`.
+Config parameters: `device_id`, `wifi0_ssid`, `wifi0_pass`, `wifi1_ssid`, `wifi1_pass`, `wifi2_ssid`, `wifi2_pass` (an empty SSID means an unused slot), `transport` (`http` or `mqtt`), `endpoint_url`, `api_key` (secret, masked in `list` and `get`), `mqtt_host`, `mqtt_topic`, `ntp_server`, `scan_window_s`, `scan_pause_s`, `rssi_min`.
 
 CLI commands: `list`, `get <name>`, `set <name> <value>`, `save`, `reset`, `status`, `reboot`. Every parameter change must be persisted to NVS through the change callback or an explicit `save`.
 
