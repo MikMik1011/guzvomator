@@ -40,7 +40,7 @@ Sistem se sastoji od senzorskog čvora, dva izmenljiva načina slanja i backend-
 
 ESP32 uređaj periodično skenira BLE, lokalno obrađuje rezultate i šalje samo agregirane podatke. Jedan zapis sadrži:
 
-- identifikator senzorskog čvora, identifikator pokretanja i redni broj zapisa (za otkrivanje duplikata pri ponovnom slanju) i starost zapisa u sekundama (vreme prijema dodeljuje backend);
+- identifikator senzorskog čvora i vreme merenja (UTC, sa sata sinhronizovanog preko NTP-a);
 - broj detektovanih uređaja i broj uređaja čiji RSSI prelazi definisani prag;
 - prosečan RSSI i trajanje perioda skeniranja;
 - temperaturu, vlažnost vazduha i osvetljenost.
@@ -75,18 +75,18 @@ Senzorski čvor je Seeed Studio XIAO ESP32-C6 [3]. Ploča ima integrisan BLE i W
 
 Uređaj radi stalno, bez dubokog sna. Firmver koristi dva FreeRTOS taska: task komandne linije (čita serijski port i menja konfiguraciju) i radni task koji stalno ponavlja sledeći ciklus. Konfiguracija se deli preko muteksa, a radni task je na početku svakog ciklusa preuzima, pa se izmena primenjuje u sledećem ciklusu.
 
-1. Učitavanje konfiguracije iz trajne memorije (NVS) pri pokretanju; na početku svakog ciklusa provera da je Wi-Fi povezan na jedan od sačuvanih profila, počevši od najjačeg vidljivog (ponovni pokušaji bez blokiranja komandne linije).
+1. Učitavanje konfiguracije iz trajne memorije (NVS) pri pokretanju; na početku svakog ciklusa provera da je Wi-Fi povezan na jedan od sačuvanih profila, počevši od najjačeg vidljivog (ponovni pokušaji bez blokiranja komandne linije); merenje počinje tek posle prve sinhronizacije sata preko NTP-a.
 2. BLE skeniranje u prozoru zadatog trajanja. Wi-Fi ostaje povezan tokom skeniranja. ESP32-C6 ima jedan 2,4 GHz radio koji BLE i Wi-Fi dele vremenskom podelom (koegzistencija), pa prenos može da utiče na broj uhvaćenih paketa. Ovo treba proveriti u praksi poređenjem broja detektovanih uređaja sa Wi-Fi saobraćajem i bez njega. Wi-Fi probe zahtevi su eventualni dodatni izvor.
 3. Heširanje adresa uređaja novom nasumičnom solju generisanom za taj prozor, brojanje jedinstvenih heševa, RSSI filtriranje, odbacivanje sirovih adresa iz RAM-a.
 4. Očitavanje BME280 i BH1750.
-5. Slanje agregiranog zapisa preko odabranog transporta. Ako slanje ne uspe, ograničen broj poslednjih zapisa čuva se u RAM-u i šalje po ponovnom povezivanju, svaki sa svojom starošću u sekundama.
+5. Slanje agregiranog zapisa preko odabranog transporta. Ako slanje ne uspe, ograničen broj poslednjih zapisa čuva se u RAM-u i šalje po ponovnom povezivanju, svaki sa svojim vremenom merenja.
 6. Kratka pauza do sledećeg ciklusa.
 
-Čvor nema izvor tačnog vremena i ne koristi NTP. Vreme prijema svakom zapisu dodeljuje backend, a zapis iz reda čekanja nosi svoju starost u sekundama, pa se vreme merenja može izračunati.
+Čvor sinhronizuje sat preko NTP-a i koristi ga za proveru datuma važenja TLS sertifikata pri HTTPS komunikaciji i za vremenske oznake zapisa (UTC). Sat nastavlja da radi i kada Wi-Fi privremeno nestane, a ponovo se sinhronizuje po povratku mreže. Backend dodatno čuva sopstveno vreme prijema zapisa, radi dijagnostike. Jedinstveni ključ zapisa je kombinacija identifikatora čvora i vremena merenja, pa je ponovno slanje istog zapisa bezbedno.
 
 **Konfiguracija i komandna linija**
 
-Parametri (identifikator uređaja, do tri Wi-Fi profila, tip transporta i adresa, trajanje prozora skeniranja, interval, RSSI prag) registruju se kao konfiguracioni parametri po uzoru na dizajn biblioteke arduinoConfig [6] i trajno čuvaju u NVS-u. Autor je biblioteku arduinoConfig označio kao zastarelu, pa se ona ne koristi kao zavisnost, već se implementira sopstveni registar parametara sa istim konceptom (naziv, tip, promenljiva i povratni poziv pri izmeni); trajno čuvanje je deo sopstvene implementacije. Podešavanje se vrši preko serijske komandne linije zasnovane na arduinoCmdProc [7] (komande poput `list`, `get`, `set`, `save`, `reset`, `status`). Tačan skup komandi biće usklađen sa bibliotekom arduinoCmdProc. Web portal za konfiguraciju nije deo osnovnog obima.
+Parametri (identifikator uređaja, do tri Wi-Fi profila, tip transporta i adresa, NTP server, trajanje prozora skeniranja, interval, RSSI prag) registruju se kao konfiguracioni parametri po uzoru na dizajn biblioteke arduinoConfig [6] i trajno čuvaju u NVS-u. Autor je biblioteku arduinoConfig označio kao zastarelu, pa se ona ne koristi kao zavisnost, već se implementira sopstveni registar parametara sa istim konceptom (naziv, tip, promenljiva i povratni poziv pri izmeni); trajno čuvanje je deo sopstvene implementacije. Podešavanje se vrši preko serijske komandne linije zasnovane na arduinoCmdProc [7] (komande poput `list`, `get`, `set`, `save`, `reset`, `status`). Tačan skup komandi biće usklađen sa bibliotekom arduinoCmdProc. Web portal za konfiguraciju nije deo osnovnog obima.
 
 **Opciona proširenja**
 
@@ -115,13 +115,13 @@ Primer oblika podataka (linearnost je samo ilustracija, u realnosti odnos ne mor
 - stabilnost merenja tokom vremena;
 - pozadinski broj uređaja iz susednih prostorija i spratova, izmeren pri praznom prostoru.
 
-Broj detektovanih uređaja nije uporediv između prostora, pa se RSSI prag i kalibracija određuju za svaki prostor posebno. RSSI ne razlikuje pravac, pa uređaji iz susednih prostorija i sa drugih spratova ulaze u slabiji deo opsega; zato se za svaki prostor beleži merenje pri praznoj prostoriji kao referenca. Za velike prostorije jedan čvor pokriva samo zonu oko sebe. Kako bi se prag mogao birati naknadno bez ponovnog fleširanja, zapis može da sadrži i brojeve uređaja za nekoliko fiksnih RSSI pragova (agregirano, bez podataka o pojedinačnim uređajima). Varijacija broja uređaja pri istom broju osoba (smena posetilaca, ponašanje telefona, rotacija adresa) navodi se u analizi.
+Broj detektovanih uređaja nije uporediv između prostora, pa se RSSI prag i kalibracija određuju za svaki prostor posebno. RSSI ne razlikuje pravac, pa uređaji iz susednih prostorija i sa drugih spratova ulaze u slabiji deo opsega; zato se za svaki prostor beleži merenje pri praznoj prostoriji kao referenca. Za velike prostorije jedan čvor pokriva samo zonu oko sebe. Varijacija broja uređaja pri istom broju osoba (smena posetilaca, ponašanje telefona, rotacija adresa) navodi se u analizi.
 
 Način kalibracije (na primer regresija nad prikupljenim podacima) određuje se tek nakon analize odnosa koji se u podacima pokaže. Kalibracija važi za konkretan prostor.
 
 ## 7 Privatnost i ograničenja
 
-Obrada identifikatora uređaja vrši se lokalno na ESP32 čvoru. Adrese se heširaju nasumičnom solju koja se generiše iznova za svaki prozor skeniranja (strože od dnevne promene i bez potrebe za satom); so se ne čuva niti šalje, a heševi se čuvaju samo u RAM-u tokom prozora skeniranja i odbacuju zajedno sa solju posle brojanja. Centralnom sistemu se šalju samo agregirani podaci, bez adresa ili drugih podataka koji bi omogućili dugoročno praćenje pojedinačnih uređaja. Kamere se ne koriste.
+Obrada identifikatora uređaja vrši se lokalno na ESP32 čvoru. Adrese se heširaju nasumičnom solju koja se generiše iznova za svaki prozor skeniranja (strože od dnevne promene); so se ne čuva niti šalje, a heševi se čuvaju samo u RAM-u tokom prozora skeniranja i odbacuju zajedno sa solju posle brojanja. Centralnom sistemu se šalju samo agregirani podaci, bez adresa ili drugih podataka koji bi omogućili dugoročno praćenje pojedinačnih uređaja. Kamere se ne koriste.
 
 Pre postavljanja sistema u stvaran prostor potrebna je dozvola fakulteta za postavljanje senzora, uz proveru dodatnih zahteva u vezi sa privatnošću.
 

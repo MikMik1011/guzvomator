@@ -17,9 +17,6 @@ ScanResult WindowAggregator::summarize(int8_t rssiMin) const {
     const float mean = entry.second.mean();
     meanSum += mean;
     if (mean >= rssiMin) result.uniqueDevicesAboveRssi++;
-    for (size_t i = 0; i < kSweepSize; i++) {
-      if (mean >= kSweepRssi[i]) result.sweepCounts[i]++;
-    }
   }
   if (!devices_.empty()) {
     result.avgRssi = static_cast<int8_t>(lroundf(meanSum / devices_.size()));
