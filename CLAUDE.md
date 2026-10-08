@@ -80,9 +80,17 @@ CLI commands: `list`, `get <name>`, `set <name> <value>`, `save`, `reset`, `stat
 
 ## Payload
 
-One JSON object per reading, identical for HTTP and MQTT. No formal schema yet; the format is not frozen. Before implementing the backend endpoint, propose the fields and confirm them, then keep firmware and backend in sync.
+One JSON object per reading, identical for HTTP and MQTT. The format below is implemented in `firmware/lib/Payload` and validated by `backend/app/models.py`; keep the two in sync. `v` stays `1` for the course of this project.
 
-Intended contents: node identifier, `ts` (measurement time, UTC epoch seconds), scan window length, number of detected devices (unique salted hashes), number above the RSSI threshold, average RSSI, and optionally temperature, humidity and illuminance.
+```json
+{"v":1,"device_id":"guzvo-a1b2c3","ts":1790000000,"scan_window_s":10,"rssi_min":-80,
+ "devices":12,"devices_above_rssi":5,"avg_rssi":-83,
+ "temp_c":22.4,"humidity_pct":41.0,"lux":312.0}
+```
+
+- `ts`: measurement time, UTC epoch seconds. `rssi_min`: the threshold used for `devices_above_rssi`. `devices`: unique salted hashes in the window.
+- `temp_c`, `humidity_pct` and `lux` are optional and left out when a sensor has no value. Sensors arrive in step 4.
+- The firmware refuses to build a payload for a `device_id` that is not letters, digits, `-` or `_`, so no JSON escaping is needed.
 
 The backend treats `device_id + ts` as the duplicate-detection key, so a retried send is idempotent.
 
