@@ -1,6 +1,7 @@
 #include "Cli.h"
 
 #include <Arduino.h>
+#include <Reporter.h>
 #include <Uplink.h>
 #include <cmdProc.h>
 #include <time.h>
@@ -15,6 +16,7 @@ constexpr const char* kMaskedSecret = "****";
 // report errors through these.
 DeviceConfig* config = nullptr;
 Uplink* uplink = nullptr;
+const Reporter* reporter = nullptr;
 const char* lastError = nullptr;
 
 int fail(const char* message) {
@@ -147,8 +149,17 @@ int cmdWifiScan(CmdProc::Proc&) {
   return 0;
 }
 
+void printDeliveryStatus() {
+  Serial.printf("queued=%u\nsent=%lu\nrejected=%lu\ndropped=%lu\n",
+                static_cast<unsigned>(reporter->queued()),
+                static_cast<unsigned long>(reporter->stats().sent),
+                static_cast<unsigned long>(reporter->stats().rejected),
+                static_cast<unsigned long>(reporter->stats().dropped));
+}
+
 int cmdStatus(CmdProc::Proc&) {
   printNetworkStatus();
+  printDeliveryStatus();
   Serial.printf("unsaved=%s\n", config->hasUnsavedChanges() ? "yes" : "no");
   Serial.printf("config_version=%lu\n",
                 static_cast<unsigned long>(config->version()));
@@ -192,9 +203,11 @@ const char* describeError(int code) {
 
 }  // namespace
 
-Cli::Cli(DeviceConfig& deviceConfig, Uplink& uplinkRef)
+Cli::Cli(DeviceConfig& deviceConfig, Uplink& uplinkRef,
+         const Reporter& reporterRef)
     : config_(deviceConfig),
       uplink_(uplinkRef),
+      reporter_(reporterRef),
       proc_(new CmdProc::Proc) {}
 
 Cli::~Cli() = default;
@@ -202,6 +215,7 @@ Cli::~Cli() = default;
 void Cli::begin() {
   config = &config_;
   uplink = &uplink_;
+  reporter = &reporter_;
 
   proc_->Init(9);
   proc_->Add("list", cmdList, 1, 1);

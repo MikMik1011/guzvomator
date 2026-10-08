@@ -192,6 +192,8 @@ int Uplink::scanVisible(VisibleNetwork* out, size_t maxCount) {
   return static_cast<int>(count);
 }
 
+bool Uplink::connected() const { return WiFi.status() == WL_CONNECTED; }
+
 bool Uplink::clockSynced() const { return impl_->clockSynced; }
 
 Uplink::Status Uplink::status() const {

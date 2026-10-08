@@ -41,6 +41,8 @@ class Uplink {
   static constexpr int kScanFailed = -2;
   int scanVisible(VisibleNetwork* out, size_t maxCount);
 
+  bool connected() const;
+
   // True once SNTP has set the clock this boot, and stays true if Wi-Fi drops.
   bool clockSynced() const;
 

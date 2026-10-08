@@ -1,11 +1,16 @@
 #include <Arduino.h>
 #include <Cli.h>
 #include <DeviceConfig.h>
-#include <Uplink.h>
+#include <HttpTransport.h>
+#include <Reporter.h>
 #include <Scanner.h>
+#include <Uplink.h>
+#include <string.h>
+#include <time.h>
 
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kTaskStackBytes = 6144;
+constexpr uint32_t kScanStackBytes = 12288;  // a TLS handshake needs a deep stack
 constexpr uint32_t kNetworkStackBytes = 8192;
 constexpr uint32_t kCliPollMs = 10;
 constexpr uint32_t kNetworkPollMs = 1000;
@@ -15,13 +20,50 @@ constexpr uint8_t kLedOff = HIGH;
 
 DeviceConfig config;
 Uplink uplink(config);
-Cli serialCli(config, uplink);
+Reporter reporter;
+Cli serialCli(config, uplink, reporter);
 Scanner scanner;
 
 void printResult(const ScanResult& result, int8_t rssiMin) {
   Serial.printf("window %us: devices %u, above %d dBm %u, avg rssi %d\n",
                 result.windowS, result.uniqueDevices, rssiMin,
                 result.uniqueDevicesAboveRssi, result.avgRssi);
+}
+
+Reading makeReading(const ConfigValues& values, const ScanResult& result) {
+  Reading reading;
+  strlcpy(reading.deviceId, values.deviceId, sizeof(reading.deviceId));
+  reading.ts = static_cast<uint32_t>(time(nullptr));
+  reading.rssiMin = values.rssiMin;
+  reading.scan = result;
+  return reading;
+}
+
+void logFlush(const Reporter::FlushSummary& summary) {
+  char reason[48];
+  describeOutcome(summary.failure, reason, sizeof(reason));
+
+  if (summary.sent > 0) {
+    Serial.printf("sent %u reading(s), %u queued\n",
+                  static_cast<unsigned>(summary.sent),
+                  static_cast<unsigned>(reporter.queued()));
+  }
+  if (summary.rejected > 0) {
+    Serial.printf("backend rejected %u reading(s): %s\n",
+                  static_cast<unsigned>(summary.rejected), reason);
+  }
+  if (summary.stalled) {
+    Serial.printf("send failed: %s, %u queued\n", reason,
+                  static_cast<unsigned>(reporter.queued()));
+  }
+}
+
+void deliverQueued(const ConfigValues& values) {
+  if (!uplink.connected()) return;
+  if (strcmp(values.transport, "http") != 0) return;  // mqtt comes later
+
+  HttpTransport transport(values.endpointUrl, values.apiKey);
+  logFlush(reporter.flush(transport, millis()));
 }
 
 void cliTask(void*) {
@@ -52,6 +94,8 @@ void scanTask(void*) {
     digitalWrite(LED_BUILTIN, kLedOff);
 
     printResult(result, values.rssiMin);
+    reporter.submit(makeReading(values, result));
+    deliverQueued(values);
     delay(static_cast<uint32_t>(values.scanPauseS) * 1000);
   }
 }
@@ -73,7 +117,7 @@ void setup() {
 
   xTaskCreate(cliTask, "cli", kTaskStackBytes, nullptr, 1, nullptr);
   xTaskCreate(networkTask, "uplink", kNetworkStackBytes, nullptr, 1, nullptr);
-  xTaskCreate(scanTask, "scan", kTaskStackBytes, nullptr, 1, nullptr);
+  xTaskCreate(scanTask, "scan", kScanStackBytes, nullptr, 1, nullptr);
 }
 
 void loop() { delay(1000); }
