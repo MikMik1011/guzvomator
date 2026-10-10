@@ -15,7 +15,10 @@ struct ConfigValues {
   char endpointUrl[128] = "";
   char apiKey[65] = "";
   char mqttHost[64] = "";
-  char mqttTopic[64] = "";
+  uint16_t mqttPort = 1883;
+  char mqttUser[33] = "";
+  char mqttPass[65] = "";
+  char mqttTopic[64] = "guzvomator/readings";
   char ntpServer[64] = "pool.ntp.org";
   uint16_t scanWindowS = 10;
   uint16_t scanPauseS = 2;

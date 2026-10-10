@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 #include <unity.h>
 
@@ -22,6 +23,10 @@ class FakeTransport : public ITransport {
         script_[calls_ < script_.size() ? calls_ : script_.size() - 1];
     calls_++;
     return {result, 0};
+  }
+
+  void describe(const SendOutcome&, char* out, size_t cap) const override {
+    snprintf(out, cap, "fake");
   }
 
   std::vector<std::string> payloads;
