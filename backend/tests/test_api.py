@@ -227,3 +227,17 @@ def test_plot_rejects_a_period_combined_with_from(client):
 
 def test_plot_needs_no_key(client):
     assert client.get("/api/v1/plot").status_code == 200
+
+
+@pytest.mark.parametrize("bucket", ["auto", "raw", "30s", "5m", "1h"])
+def test_plot_accepts_bucket_sizes(client, bucket):
+    client.post("/api/v1/readings", json=valid_payload(ts=recent_ts()), headers=HEADERS)
+    response = client.get("/api/v1/plot", params={"period": "1h", "bucket": bucket})
+    assert response.status_code == 200
+    assert response.content.startswith(b"\x89PNG")
+
+
+@pytest.mark.parametrize("bucket", ["bogus", "0m", "5x", "-1m"])
+def test_plot_rejects_a_bad_bucket(client, bucket):
+    response = client.get("/api/v1/plot", params={"bucket": bucket})
+    assert response.status_code == 400
