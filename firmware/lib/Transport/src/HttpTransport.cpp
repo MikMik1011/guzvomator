@@ -81,7 +81,8 @@ SendOutcome HttpTransport::send(const char* json, size_t len) {
   return {classifyHttpStatus(status), status};
 }
 
-void describeOutcome(const SendOutcome& outcome, char* out, size_t cap) {
+void HttpTransport::describe(const SendOutcome& outcome, char* out,
+                             size_t cap) const {
   const int detail = outcome.detail;
   if (detail == HttpTransport::kErrorNoEndpoint) {
     snprintf(out, cap, "endpoint_url is not set");

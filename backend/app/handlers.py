@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
+from pydantic import ValidationError
+
 from app.models import Reading
 from app.repository import ReadingRepository, StoredReading
 
@@ -38,6 +40,12 @@ class StoreOutcome(Enum):
     DUPLICATE = "duplicate"
 
 
+class IngestOutcome(Enum):
+    CREATED = "created"
+    DUPLICATE = "duplicate"
+    INVALID = "invalid"
+
+
 def store_reading(
     repository: ReadingRepository, reading: Reading, now: datetime
 ) -> StoreOutcome:
@@ -45,6 +53,17 @@ def store_reading(
         raise InvalidRequest("ts is in the future")
     inserted = repository.insert(reading, now)
     return StoreOutcome.CREATED if inserted else StoreOutcome.DUPLICATE
+
+
+def ingest_message(
+    repository: ReadingRepository, payload: bytes, now: datetime
+) -> IngestOutcome:
+    """Store a reading that arrived as raw JSON; invalid ones are reported, not raised."""
+    try:
+        outcome = store_reading(repository, Reading.model_validate_json(payload), now)
+    except (ValidationError, InvalidRequest):
+        return IngestOutcome.INVALID
+    return IngestOutcome(outcome.value)
 
 
 def parse_period(text: str) -> timedelta:

@@ -2,6 +2,7 @@
 #include <Cli.h>
 #include <DeviceConfig.h>
 #include <HttpTransport.h>
+#include <MqttTransport.h>
 #include <Reporter.h>
 #include <Scanner.h>
 #include <Uplink.h>
@@ -39,9 +40,10 @@ Reading makeReading(const ConfigValues& values, const ScanResult& result) {
   return reading;
 }
 
-void logFlush(const Reporter::FlushSummary& summary) {
+void logFlush(const ITransport& transport,
+              const Reporter::FlushSummary& summary) {
   char reason[48];
-  describeOutcome(summary.failure, reason, sizeof(reason));
+  transport.describe(summary.failure, reason, sizeof(reason));
 
   if (summary.sent > 0) {
     Serial.printf("sent %u reading(s), %u queued\n",
@@ -60,10 +62,16 @@ void logFlush(const Reporter::FlushSummary& summary) {
 
 void deliverQueued(const ConfigValues& values) {
   if (!uplink.connected()) return;
-  if (strcmp(values.transport, "http") != 0) return;  // mqtt comes later
 
-  HttpTransport transport(values.endpointUrl, values.apiKey);
-  logFlush(reporter.flush(transport, millis()));
+  if (strcmp(values.transport, "mqtt") == 0) {
+    MqttTransport transport({values.mqttHost, values.mqttPort, values.mqttUser,
+                             values.mqttPass, values.deviceId,
+                             values.mqttTopic});
+    logFlush(transport, reporter.flush(transport, millis()));
+  } else {
+    HttpTransport transport(values.endpointUrl, values.apiKey);
+    logFlush(transport, reporter.flush(transport, millis()));
+  }
 }
 
 void cliTask(void*) {

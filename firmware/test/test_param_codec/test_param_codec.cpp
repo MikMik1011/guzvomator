@@ -49,6 +49,8 @@ void test_defaults() {
   expectFormatted("scan_pause_s", values, "2");
   expectFormatted("rssi_min", values, "-80");
   expectFormatted("wifi0_ssid", values, "");
+  expectFormatted("mqtt_port", values, "1883");
+  expectFormatted("mqtt_topic", values, "guzvomator/readings");
 }
 
 void test_number_accepts_values_inside_range() {
@@ -195,6 +197,26 @@ void test_url_rules() {
                     apply("endpoint_url", values, "example.org"));
 }
 
+void test_mqtt_port_range() {
+  ConfigValues values;
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("mqtt_port", values, "8883"));
+  TEST_ASSERT_EQUAL_UINT16(8883, values.mqttPort);
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("mqtt_port", values, "65535"));
+  TEST_ASSERT_EQUAL(SetStatus::OutOfRange, apply("mqtt_port", values, "0"));
+  TEST_ASSERT_EQUAL(SetStatus::OutOfRange, apply("mqtt_port", values, "65536"));
+  TEST_ASSERT_EQUAL_UINT16(65535, values.mqttPort);
+}
+
+void test_mqtt_login_is_text_and_the_password_is_secret() {
+  ConfigValues values;
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("mqtt_user", values, "guzvo"));
+  TEST_ASSERT_EQUAL(SetStatus::Ok, apply("mqtt_pass", values, "s3cret"));
+  expectFormatted("mqtt_user", values, "guzvo");
+  expectFormatted("mqtt_pass", values, "s3cret");
+  TEST_ASSERT_FALSE(findParam("mqtt_user")->secret);
+  TEST_ASSERT_TRUE(findParam("mqtt_pass")->secret);
+}
+
 void test_format_round_trip() {
   ConfigValues values;
   apply("scan_window_s", values, "45");
@@ -224,6 +246,8 @@ int main() {
   RUN_TEST(test_device_id_rules);
   RUN_TEST(test_transport_rules);
   RUN_TEST(test_url_rules);
+  RUN_TEST(test_mqtt_port_range);
+  RUN_TEST(test_mqtt_login_is_text_and_the_password_is_secret);
   RUN_TEST(test_format_round_trip);
   return UNITY_END();
 }

@@ -19,6 +19,8 @@ class HttpTransport : public ITransport {
   ~HttpTransport() override;
 
   SendOutcome send(const char* json, size_t len) override;
+  void describe(const SendOutcome& outcome, char* out,
+                size_t cap) const override;
 
  private:
   struct Impl;
@@ -26,6 +28,3 @@ class HttpTransport : public ITransport {
   const char* url_;
   const char* apiKey_;
 };
-
-// A short human readable form of an outcome, for logs.
-void describeOutcome(const SendOutcome& outcome, char* out, size_t cap);

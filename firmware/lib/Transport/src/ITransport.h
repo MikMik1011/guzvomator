@@ -16,4 +16,8 @@ class ITransport {
  public:
   virtual ~ITransport() = default;
   virtual SendOutcome send(const char* json, size_t len) = 0;
+
+  // A short human readable form of an outcome this transport produced.
+  virtual void describe(const SendOutcome& outcome, char* out,
+                        size_t cap) const = 0;
 };

@@ -1,11 +1,14 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.handlers import (
     MAX_FUTURE_S,
+    IngestOutcome,
     InvalidRequest,
     StoreOutcome,
+    ingest_message,
     list_readings,
     parse_period,
     readings_to_csv,
@@ -144,3 +147,36 @@ def test_csv_has_header_and_blank_cells_for_missing_values():
     assert lines[0].startswith("device_id,ts,received_at")
     assert lines[1].endswith(",,,")
     assert len(lines) == 2
+
+
+def raw(**overrides) -> bytes:
+    return json.dumps(valid_payload(**overrides)).encode()
+
+
+def test_ingest_stores_a_valid_message():
+    repository = InMemoryRepository()
+    assert ingest_message(repository, raw(), NOW) is IngestOutcome.CREATED
+    assert len(repository.rows) == 1
+
+
+def test_ingest_reports_a_redelivered_message_as_duplicate():
+    repository = InMemoryRepository()
+    ingest_message(repository, raw(), NOW)
+    assert ingest_message(repository, raw(), NOW) is IngestOutcome.DUPLICATE
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"not json",
+        b"[]",
+        b"",
+        raw(v=2),
+        raw(devices=-1),
+        raw(ts=NOW_TS + MAX_FUTURE_S + 60),
+    ],
+)
+def test_ingest_reports_a_bad_message_as_invalid(payload):
+    repository = InMemoryRepository()
+    assert ingest_message(repository, payload, NOW) is IngestOutcome.INVALID
+    assert repository.rows == {}

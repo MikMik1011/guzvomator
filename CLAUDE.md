@@ -66,7 +66,7 @@ Worker cycle:
 3. Hash each address with a fresh random salt generated for this window, count unique hashes, count those above `rssi_min`, compute average RSSI. Discard raw addresses.
 4. Read BME280 and BH1750.
 5. Build the JSON payload (see "Payload").
-6. Queue the reading (RAM only, 20 readings, the oldest is dropped when full) and send the queue oldest first with the transport selected by config. HTTP `200` or `201` removes a reading. `400` drops it for good, because the backend says the payload is invalid. Anything else (no network, timeout, `5xx`, wrong key or URL) keeps it and pauses sending with a backoff of 5 s doubling to 60 s. Only the `http` transport (with `http://` or `https://` URLs) is implemented so far.
+6. Queue the reading (RAM only, 20 readings, the oldest is dropped when full) and send the queue oldest first with the transport selected by config. HTTP `200` or `201` removes a reading. `400` drops it for good, because the backend says the payload is invalid. Anything else (no network, timeout, `5xx`, wrong key or URL) keeps it and pauses sending with a backoff of 5 s doubling to 60 s. With `mqtt` each reading is published with QoS 1 and counts as sent when the broker acknowledges it; the broker cannot reject a payload, so there is no `400` equivalent and invalid readings are dropped by the backend subscriber. A refused login, a missing acknowledgement or a connection error keeps the reading and backs off like HTTP. The MQTT client is the ESP-IDF `esp-mqtt` that ships with the Arduino core (no extra library); it connects when a flush starts and disconnects when it ends. Port 8883 verifies the broker certificate against the built-in bundle, like HTTPS.
 7. Pause `scan_pause_s`.
 
 Each reading carries `ts`, its measurement time in UTC epoch seconds from the SNTP-synced clock. The clock keeps running if Wi-Fi drops and SNTP resyncs when it returns. The backend also stores its own receive time for diagnostics.
@@ -79,7 +79,7 @@ The supervisor's libraries:
 
 License: AGPL-3.0 for the whole project, with a single `LICENSE` file in the repository root (arduinoCmdProc is MIT, which is compatible). No per-file license headers or SPDX lines. Never modify or strip license notices in third-party code. To be confirmed with the supervisor.
 
-Config parameters: `device_id`, `wifi0_ssid`, `wifi0_pass`, `wifi1_ssid`, `wifi1_pass`, `wifi2_ssid`, `wifi2_pass` (an empty SSID means an unused slot), `transport` (`http` or `mqtt`), `endpoint_url`, `api_key` (secret, masked in `list` and `get`), `mqtt_host`, `mqtt_topic`, `ntp_server`, `scan_window_s`, `scan_pause_s`, `rssi_min`.
+Config parameters: `device_id`, `wifi0_ssid`, `wifi0_pass`, `wifi1_ssid`, `wifi1_pass`, `wifi2_ssid`, `wifi2_pass` (an empty SSID means an unused slot), `transport` (`http` or `mqtt`), `endpoint_url`, `api_key` (secret, masked in `list` and `get`), `mqtt_host`, `mqtt_port` (default 1883; 8883 means TLS), `mqtt_user`, `mqtt_pass` (secret), `mqtt_topic` (default `guzvomator/readings`), `ntp_server`, `scan_window_s`, `scan_pause_s`, `rssi_min`.
 
 CLI commands: `list`, `get <name>`, `set <name> [value]` (no value clears the field), `save`, `reset`, `status` (Wi-Fi, clock, send queue and counters, unsaved changes, uptime, free heap), `reboot`, `wifi_scan` (lists visible networks with signal, channel and security; blocks for a few seconds and disturbs BLE scanning while it runs), `help`. Every parameter change must be persisted to NVS through the change callback or an explicit `save`.
 
@@ -117,7 +117,7 @@ The backend treats `device_id + ts` as the duplicate-detection key, so a retried
 - Layout: `app/handlers.py` (plain logic), `app/db.py` (PostgreSQL), `app/api.py` (FastAPI adapter), `app/schema.sql` (applied on first connection). `make backend-test` runs the tests. `make backend-dev` (add `API_HOST=0.0.0.0` so other devices such as the node can reach it) starts PostgreSQL in Docker (`docker-compose.dev.yml` publishes it on localhost) and runs the API with `uvicorn --reload` on the host.
 - For HTTPS, run the backend behind a reverse proxy that terminates TLS (Caddy, nginx or Traefik) with a certificate from a public CA. uvicorn keeps speaking plain HTTP behind it.
 - Keep the handler logic separate from the framework layer so it can be wrapped as an Azure Function if the supervisor requires Azure. Not yet decided.
-- MQTT ingestion (Mosquitto subscriber) is optional and comes last.
+- MQTT ingestion: `app/mqtt_ingest.py` is a separate process (`python -m app.mqtt_ingest`, the `ingest` service in `docker-compose.yml`) that subscribes to `MQTT_TOPIC` (default `guzvomator/#`) with QoS 1 and a persistent session, and stores readings through the same `store_reading` logic as HTTP (`ingest_message` in `handlers.py`). A message is acknowledged only after it was handled: invalid ones are logged and dropped, a storage failure exits the process without acknowledging so the broker redelivers it after the restart. Mosquitto (`mosquitto` service, config in `backend/mosquitto/`) requires a login created from `MQTT_USER` and `MQTT_PASSWORD` at start. The compose file publishes port 1883 in plain text; for a broker reachable from the internet, TLS on 8883 still has to be set up (not done, and not in `docker-compose.prod.yml`).
 
 ## Privacy rules (hard constraints)
 
