@@ -20,7 +20,7 @@ from app.handlers import (
     store_reading,
 )
 from app.models import Reading
-from app.plotting import render_devices_plot
+from app.plotting import AUTO, parse_bucket, render_devices_plot
 from app.repository import ReadingRepository, StoredReading
 from app.settings import Settings, get_settings
 
@@ -107,6 +107,9 @@ def get_plot(
     period: Annotated[str | None, Query(pattern=r"^\d{1,5}[mhd]$")] = None,
     device_id: str | None = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    bucket: Annotated[str, Query(pattern=r"^(auto|raw|\d{1,5}[smhd])$")] = AUTO,
 ):
     readings = select_readings(repository, from_, to, period, device_id, limit)
-    return Response(render_devices_plot(readings), media_type="image/png")
+    return Response(
+        render_devices_plot(readings, parse_bucket(bucket)), media_type="image/png"
+    )
