@@ -59,7 +59,7 @@ flowchart LR
   DB --> API["REST API, CSV izvoz"]
 ```
 
-Backend prima isti zapis sa oba transporta, a MQTT broker i MQTT transport su opcioni.
+Backend prima isti zapis sa oba transporta: HTTP endpoint prima zapis direktno, a MQTT pretplatnik ga čita iz Mosquitto brokera (QoS 1) i upisuje u istu bazu istom logikom.
 
 ## 5 Hardver i firmware
 
