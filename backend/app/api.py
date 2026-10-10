@@ -20,7 +20,8 @@ from app.handlers import (
     store_reading,
 )
 from app.models import Reading
-from app.repository import ReadingRepository
+from app.plotting import render_devices_plot
+from app.repository import ReadingRepository, StoredReading
 from app.settings import Settings, get_settings
 
 app = FastAPI(title="Guzvomator")
@@ -69,6 +70,18 @@ def create_reading(
     return {"status": outcome.value}
 
 
+def select_readings(
+    repository: ReadingRepository,
+    from_: datetime | None,
+    to: datetime | None,
+    period: str | None,
+    device_id: str | None,
+    limit: int,
+) -> list[StoredReading]:
+    start, end = resolve_range(datetime.now(timezone.utc), from_, to, period)
+    return list_readings(repository, start, end, device_id, limit)
+
+
 @app.get("/api/v1/readings")
 def get_readings(
     request: Request,
@@ -79,9 +92,21 @@ def get_readings(
     device_id: str | None = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
 ):
-    start, end = resolve_range(datetime.now(timezone.utc), from_, to, period)
-    readings = list_readings(repository, start, end, device_id, limit)
+    readings = select_readings(repository, from_, to, period, device_id, limit)
 
     if "text/csv" in request.headers.get("accept", ""):
         return PlainTextResponse(readings_to_csv(readings), media_type="text/csv")
     return readings_to_dicts(readings)
+
+
+@app.get("/api/v1/plot")
+def get_plot(
+    repository: Annotated[ReadingRepository, Depends(get_repository)],
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: datetime | None = None,
+    period: Annotated[str | None, Query(pattern=r"^\d{1,5}[mhd]$")] = None,
+    device_id: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+):
+    readings = select_readings(repository, from_, to, period, device_id, limit)
+    return Response(render_devices_plot(readings), media_type="image/png")

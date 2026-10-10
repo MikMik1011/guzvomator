@@ -15,6 +15,7 @@ RUN uv sync --frozen --no-dev
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
+    MPLCONFIGDIR=/tmp/matplotlib \
     PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /srv

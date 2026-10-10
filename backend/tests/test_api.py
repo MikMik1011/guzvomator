@@ -202,3 +202,28 @@ def test_get_rejects_inverted_range(client):
         params={"from": now.isoformat(), "to": (now - timedelta(hours=1)).isoformat()},
     )
     assert response.status_code == 400
+
+
+def test_plot_returns_a_png_for_a_period(client):
+    client.post("/api/v1/readings", json=valid_payload(ts=recent_ts()), headers=HEADERS)
+    response = client.get("/api/v1/plot", params={"period": "1h"})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content.startswith(b"\x89PNG")
+
+
+def test_plot_of_an_empty_range_is_still_an_image(client):
+    response = client.get("/api/v1/plot", params={"period": "5m"})
+    assert response.status_code == 200
+    assert response.content.startswith(b"\x89PNG")
+
+
+def test_plot_rejects_a_period_combined_with_from(client):
+    response = client.get(
+        "/api/v1/plot", params={"period": "1h", "from": "2026-10-09T00:00:00Z"}
+    )
+    assert response.status_code == 400
+
+
+def test_plot_needs_no_key(client):
+    assert client.get("/api/v1/plot").status_code == 200
