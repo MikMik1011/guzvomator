@@ -24,5 +24,40 @@ services:
       db:
         condition: service_healthy
 
+  mosquitto:
+    image: eclipse-mosquitto:2
+    environment:
+      MQTT_USER: ${MQTT_USER:?set MQTT_USER in .env}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?set MQTT_PASSWORD in .env}
+    # The login is created from the environment on every start
+    entrypoint:
+      - sh
+      - -c
+      - >
+        mosquitto_passwd -c -b /mosquitto/passwd "$$MQTT_USER" "$$MQTT_PASSWORD" &&
+        chown 1883:1883 /mosquitto/passwd &&
+        exec /docker-entrypoint.sh mosquitto -c /mosquitto/config/mosquitto.conf
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt-data:/mosquitto/data
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+
+  ingest:
+    build: .
+    command: ["python", "-m", "app.mqtt_ingest"]
+    restart: on-failure
+    environment:
+      DATABASE_URL: postgresql://guzvo:${POSTGRES_PASSWORD}@db:5432/guzvomator
+      MQTT_HOST: mosquitto
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
 volumes:
   db-data:
+  mqtt-data:
