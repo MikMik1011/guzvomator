@@ -10,8 +10,6 @@ Savremeni mobilni telefoni i drugi elektronski uređaji periodično emituju BLE 
 
 Cilj sistema nije praćenje pojedinačnih uređaja, već agregirana procena zauzetosti. Za slučaj upotrebe i testiranje odabrana je studentska čitaonica na fakultetu: studenti bi pre dolaska mogli da provere približnu zauzetost i procene da li ima slobodnih mesta.
 
-Projekat radi jedan student, Miša Stefanović (209/22).
-
 ## 2 Problem i motivacija
 
 Studenti nemaju jednostavan način da saznaju koliko je neki zajednički prostor trenutno zauzet, pa je potrebno fizički otići do njega da bi se procenilo da li je gužva. Isti problem postoji kod menze, čitaonica, biblioteka, laboratorija i drugih zajedničkih prostorija.
@@ -26,11 +24,13 @@ Projekat ispituje mogućnost razvoja sistema koji je:
 - API-first, radi integracije sa drugim servisima;
 - jednostavan za podešavanje: konfiguracija se trajno čuva na uređaju i menja se bez ponovnog flešovanja firmvera, a backend se pokreće jednom komandom.
 
-Projekat je inspirisan eksperimentom Occumetrics [1, 2], u kome je ESP32 korišćen za pasivno BLE skeniranje i procenu promena zauzetosti. Slična rešenja su open-source projekti ESP32-Paxcounter [4] i ESPresense [8]. Rezultati pokazuju da broj detektovanih uređaja može poslužiti kao indikator zauzetosti, ali da njegov odnos prema stvarnom broju ljudi zavisi od konkretnog prostora, zbog čega je potrebna kalibracija.
+Projekat je inspirisan eksperimentom Occumetrics [1, 2], u kome je ESP32 korišćen za pasivno BLE skeniranje i procenu promena zauzetosti. Slična rešenja su open-source projekti ESP32-Paxcounter [4] i ESPresense [7]. Rezultati pokazuju da broj detektovanih uređaja može poslužiti kao indikator zauzetosti, ali da njegov odnos prema stvarnom broju ljudi zavisi od konkretnog prostora, zbog čega je potrebna kalibracija.
 
 ## 3 Istraživačko pitanje
 
 U kojoj meri broj BLE uređaja detektovanih pomoću jeftinog ESP32 senzorskog čvora može da posluži kao koristan indikator stvarne zauzetosti studentske čitaonice?
+
+Pored toga, posmatra se kako se broj detektovanih uređaja menja tokom dana i u kojoj meri ta promena prati promenu stvarnog broja ljudi (korelacija).
 
 Broj detektovanih uređaja nije jednak broju ljudi: jedna osoba može imati više uređaja, neki uređaji ostaju nedetektovani, a ponašanje BLE emitovanja zavisi od proizvođača i operativnog sistema. Zato se procena kalibriše i validira poređenjem sa nezavisnim brojanjem ljudi u prostoru, kako je opisano u odeljku 6.
 
@@ -63,40 +63,36 @@ Backend prima isti zapis sa oba transporta: HTTP endpoint prima zapis direktno, 
 
 ## 5 Hardver i firmware
 
-Senzorski čvor je Seeed Studio XIAO ESP32-C6 [3]. Ploča ima integrisan BLE i Wi-Fi, nisku potrošnju u režimu dubokog sna i ugrađeno punjenje Li-ion baterije. Firmver se razvija u PlatformIO okruženju sa Arduino framework-om.
+Senzorski čvor je Seeed Studio XIAO ESP32-C6 [3]. Ploča ima integrisan BLE i Wi-Fi. Firmver se razvija u PlatformIO okruženju sa Arduino framework-om.
 
 **Hardver**
 
 - XIAO ESP32-C6 kao senzorski čvor, USB napajanje; uređaj je stalno uključen;
 - BME280 (temperatura i vlažnost vazduha) i BH1750 (osvetljenost) preko I2C, kao ambijentalni kontekst uz procenu zauzetosti;
-- Wi-Fi konekcija za slanje podataka, uz do tri sačuvana profila mreže (SSID i lozinka, WPA2-Personal); uređaj se povezuje na najjaču vidljivu poznatu mrežu.
+- Wi-Fi konekcija za slanje podataka, uz do tri sačuvana profila mreže.
 
 **Ciklus firmvera**
 
-Uređaj radi stalno, bez dubokog sna. Firmver koristi tri FreeRTOS taska: task komandne linije (čita serijski port i menja konfiguraciju), mrežni task koji održava Wi-Fi vezu i sinhronizaciju sata (ponovni pokušaji sa rastućim razmakom od 5 do 60 sekundi, pa povezivanje ne usporava ni komandnu liniju ni skeniranje) i radni task koji stalno ponavlja sledeći ciklus. Konfiguracija se deli preko muteksa, a radni task je na početku svakog ciklusa preuzima, pa se izmena primenjuje u sledećem ciklusu; mrežni task primenjuje izmenu Wi-Fi i NTP podešavanja čim se konfiguracija sačuva.
+Uređaj radi stalno i u ponavljajućem ciklusu:
 
-1. Učitavanje konfiguracije iz trajne memorije (NVS) pri pokretanju; Wi-Fi veza sa jednim od sačuvanih profila (počevši od najjačeg vidljivog) održava se u posebnom mrežnom tasku; merenje počinje tek posle prve sinhronizacije sata preko NTP-a.
-2. BLE skeniranje u prozoru zadatog trajanja. Wi-Fi ostaje povezan tokom skeniranja. ESP32-C6 ima jedan 2,4 GHz radio koji BLE i Wi-Fi dele vremenskom podelom (koegzistencija), pa prenos može da utiče na broj uhvaćenih paketa. Ovo treba proveriti u praksi poređenjem broja detektovanih uređaja sa Wi-Fi saobraćajem i bez njega. Wi-Fi probe zahtevi su eventualni dodatni izvor.
-3. Heširanje adresa uređaja novom nasumičnom solju generisanom za taj prozor, brojanje jedinstvenih heševa, RSSI filtriranje, odbacivanje sirovih adresa iz RAM-a.
+1. Wi-Fi veza sa sačuvanom mrežom i sinhronizacija sata preko NTP-a; merenje počinje tek kada je sat sinhronizovan.
+2. BLE skeniranje u prozoru zadatog trajanja. Wi-Fi ostaje povezan tokom skeniranja, a pošto ESP32-C6 ima jedan 2,4 GHz radio koji BLE i Wi-Fi dele, prenos podataka može da utiče na broj uhvaćenih paketa.
+3. Heširanje adresa uređaja novom nasumičnom solju za svaki prozor, brojanje jedinstvenih heševa, RSSI filtriranje i odbacivanje sirovih adresa.
 4. Očitavanje BME280 i BH1750.
-5. Slanje agregiranog zapisa preko odabranog transporta. Ako slanje ne uspe, ograničen broj poslednjih zapisa čuva se u RAM-u i šalje po ponovnom povezivanju, svaki sa svojim vremenom merenja. Red čekanja čuva do 20 zapisa u RAM-u (najstariji se odbacuje kada se popuni) i šalje ih od najstarijeg. Zapis koji backend odbije kao nevažeći (HTTP 400) odbacuje se zauvek, a za sve ostale greške (mreža, istek vremena, greška servera, pogrešan ključ ili adresa) zapis ostaje u redu, a ponovno slanje ide sa rastućim razmakom od 5 do 60 sekundi.
+5. Slanje agregiranog zapisa preko odabranog transporta; ako slanje ne uspe, zapisi se privremeno čuvaju i šalju kasnije, a ponovno slanje istog zapisa je bezbedno.
 6. Kratka pauza do sledećeg ciklusa.
 
-Čvor sinhronizuje sat preko NTP-a i koristi ga za proveru datuma važenja TLS sertifikata pri HTTPS komunikaciji i za vremenske oznake zapisa (UTC). Sat nastavlja da radi i kada Wi-Fi privremeno nestane, a ponovo se sinhronizuje po povratku mreže. Backend dodatno čuva sopstveno vreme prijema zapisa, radi dijagnostike. Jedinstveni ključ zapisa je kombinacija identifikatora čvora i vremena merenja, pa je ponovno slanje istog zapisa bezbedno.
+Sat sinhronizovan preko NTP-a koristi se za vremenske oznake zapisa (UTC) i za proveru TLS sertifikata pri HTTPS komunikaciji.
 
 **Konfiguracija i komandna linija**
 
-Parametri (identifikator uređaja, do tri Wi-Fi profila, tip transporta i adresa, NTP server, trajanje prozora skeniranja, interval, RSSI prag) registruju se kao konfiguracioni parametri po uzoru na dizajn biblioteke arduinoConfig [6] i trajno čuvaju u NVS-u. Autor je biblioteku arduinoConfig označio kao zastarelu, pa se ona ne koristi kao zavisnost, već se implementira sopstveni registar parametara sa istim konceptom (naziv, tip, promenljiva i povratni poziv pri izmeni); trajno čuvanje je deo sopstvene implementacije. Podešavanje se vrši preko serijske komandne linije zasnovane na arduinoCmdProc [7] (komande poput `list`, `get`, `set`, `save`, `reset`, `status`). Tačan skup komandi biće usklađen sa bibliotekom arduinoCmdProc. Web portal za konfiguraciju nije deo osnovnog obima.
-
-**Opciona proširenja**
-
-Baterijsko napajanje i režimi niske potrošnje, uz analizu uticaja na učestalost merenja i autonomiju. Zigbee mesh nije deo ovog rada.
+Parametri uređaja (identifikator, Wi-Fi profili, transport i adresa, trajanje prozora skeniranja, interval, RSSI prag) trajno se čuvaju u NVS-u i podešavaju preko serijske komandne linije. Koristi se dizajn biblioteke arduinoConfig [5], koja je označena kao zastarela, pa se implementira sopstveni registar parametara, i komandni procesor arduinoCmdProc [6].
 
 ## 6 Validacija i prikupljanje podataka
 
 Za validaciju se paralelno posmatraju dva izvora podataka vezana za iste vremenske intervale: BLE merenje senzorskog čvora i nezavisno utvrđen broj ljudi u prostoru.
 
-**Ground truth.** Osnovni metod je ručno brojanje u unapred određenim terminima, usklađeno sa prozorima skeniranja. Evidencija postojećeg sistema ulaska u čitaonicu ne može se koristiti: proverom je utvrđeno da ne postoji digitalno beleženje, jer portir ručno menja fizičke kartice za studentske indekse. Kao opcioni cilj, ukoliko fakultet dozvoli postavljanje senzora na ulaz, razmatra se VL53L1X ToF senzor za usmereno brojanje ulazaka i izlazaka.
+**Ground truth.** Osnovni metod je ručno brojanje u unapred određenim terminima, usklađeno sa prozorima skeniranja. Evidencija postojećeg sistema ulaska u čitaonicu ne može se koristiti: proverom je utvrđeno da ne postoji digitalno beleženje, jer portir ručno menja fizičke kartice za studentske indekse.
 
 Primer oblika podataka (linearnost je samo ilustracija, u realnosti odnos ne mora biti linearan):
 
@@ -109,6 +105,7 @@ Primer oblika podataka (linearnost je samo ilustracija, u realnosti odnos ne mor
 **Analiza.** Na osnovu podataka ispituju se:
 
 - odnos između broja detektovanih BLE uređaja i stvarne zauzetosti;
+- promena broja detektovanih uređaja tokom dana i njena korelacija sa promenom broja ljudi;
 - odstupanje procene od stvarne zauzetosti;
 - uticaj RSSI praga na rezultate;
 - ponašanje sistema pri različitim nivoima zauzetosti;
@@ -123,8 +120,6 @@ Način kalibracije (na primer regresija nad prikupljenim podacima) određuje se 
 
 Obrada identifikatora uređaja vrši se lokalno na ESP32 čvoru. Adrese se heširaju nasumičnom solju koja se generiše iznova za svaki prozor skeniranja (strože od dnevne promene); so se ne čuva niti šalje, a heševi se čuvaju samo u RAM-u tokom prozora skeniranja i odbacuju zajedno sa solju posle brojanja. Centralnom sistemu se šalju samo agregirani podaci, bez adresa ili drugih podataka koji bi omogućili dugoročno praćenje pojedinačnih uređaja. Kamere se ne koriste.
 
-Pre postavljanja sistema u stvaran prostor potrebna je dozvola fakulteta za postavljanje senzora, uz proveru dodatnih zahteva u vezi sa privatnošću.
-
 **MAC randomizacija** je poznato osnovno ograničenje metode. Noviji telefoni menjaju adresu koju emituju, pa jedan uređaj može biti izbrojan više puta u dužem prozoru, a broj jedinstvenih adresa se ne poklapa sa brojem uređaja. Zato se kratki prozori skeniranja, RSSI prag i kalibracija prema ground truth podacima razmatraju u metodologiji rada, a ograničenje se navodi eksplicitno pri tumačenju rezultata.
 
 ## 8 Odabrani tech stack
@@ -132,14 +127,14 @@ Pre postavljanja sistema u stvaran prostor potrebna je dozvola fakulteta za post
 | Komponenta | Tehnologija |
 | --- | --- |
 | Edge uređaj | Seeed Studio XIAO ESP32-C6, PlatformIO, Arduino framework |
-| Senzori | BLE skeniranje (Wi-Fi opciono), BME280, BH1750 |
+| Senzori | BLE skeniranje, BME280, BH1750 |
 | Konfiguracija | sopstveni registar parametara po uzoru na arduinoConfig, trajno čuvanje u NVS-u, serijska komandna linija (arduinoCmdProc) |
 | Transport | HTTPS POST (JSON) ili MQTT, biranje u konfiguraciji |
 | MQTT broker | Eclipse Mosquitto (opciono) |
-| Backend | REST endpoint, FastAPI (self-hosted); ista logika prenosiva u Azure Function |
+| Backend | REST endpoint, FastAPI; ista logika radi self-hosted i kao Azure Function |
 | Baza podataka | PostgreSQL |
 | Pristup podacima | REST API, izvoz u CSV/JSON za analizu |
-| Deployment | Docker Compose na sopstvenom serveru ili VPS-u; Azure Functions kao alternativa |
+| Deployment | Docker Compose na sopstvenom serveru ili VPS-u, kao i Azure Functions |
 
 Uređaj šalje isti JSON zapis bez obzira na transport, pa backend ne zavisi od izabranog načina slanja. Kod HTTPS-a čvor proverava serverski sertifikat ugrađenom listom javnih korenskih sertifikata (na primer Let's Encrypt iza obrnutog proksija na VPS-u), pa je za to potreban ispravan sat. Web dashboard nije deo obima ovog rada; podaci su dostupni preko REST API-ja i mogu se prikazati bilo kojim klijentom.
 
@@ -151,15 +146,11 @@ Projekat radi jedan student, pa je obim sveden na ono što je potrebno da se odg
 
 1. Firmver: BLE skeniranje, prozori, heširanje, filtriranje i lokalna agregacija.
 2. Konfiguracija i komandna linija (arduinoConfig, arduinoCmdProc) sa trajnim čuvanjem u NVS-u.
-3. HTTP transport i backend: REST endpoint, PostgreSQL, Docker Compose.
-4. Očitavanje BME280 i BH1750 i njihovo dodavanje u zapis.
-5. MQTT transport preko istog interfejsa (prvi kandidat za izbacivanje ako vremena ponestane).
+3. HTTP transport i backend: REST endpoint, PostgreSQL, Docker Compose. Deploy na Azure Functions.
+4. MQTT transport preko istog interfejsa.
+5. Očitavanje BME280 i BH1750 i njihovo dodavanje u zapis.
 6. Prikupljanje podataka u čitaonici uz ručno brojanje, kalibracija i analiza.
 7. Pisanje seminarskog rada.
-
-**Opciono, ako vreme dozvoli:** ToF senzor na ulazu kao ground truth, Wi-Fi probe skeniranje, baterijsko napajanje i duboki san, web portal za konfiguraciju, predviđanje buduće zauzetosti alatom NeuralProphet [5].
-
-Rokovi nisu navedeni; dodati ih kada se potvrdi rok za predaju.
 
 ## 10 Očekivani rezultat
 
@@ -167,7 +158,7 @@ Rezultat je funkcionalan proof-of-concept IoT sistem koji omogućava:
 
 - automatsko prikupljanje i lokalnu agregaciju podataka o detektovanim BLE uređajima, uz ambijentalna merenja;
 - konfigurisanje uređaja preko komandne linije uz trajno čuvanje podešavanja;
-- prenos podataka do centralnog sistema preko HTTP-a (i MQTT-a, ukoliko vreme dozvoli);
+- prenos podataka do centralnog sistema preko HTTP-a i MQTT-a;
 - skladištenje podataka i pristup njima preko REST API-ja;
 - procenu zauzetosti na osnovu prikupljenih podataka;
 - pokretanje backend-a jednom komandom u self-hosted okruženju;
@@ -179,7 +170,6 @@ Rezultat je funkcionalan proof-of-concept IoT sistem koji omogućava:
 2. Hacker News discussion: Building an occupancy sensor with a $5 ESP32 and a serverless DB. [news.ycombinator.com/item?id=38252566](https://news.ycombinator.com/item?id=38252566)
 3. Seeed Studio. Getting Started with Seeed Studio XIAO ESP32-C6. [wiki.seeedstudio.com](https://wiki.seeedstudio.com/xiao_esp32c6_getting_started/)
 4. ESP32-Paxcounter. Open-source ESP32 Wi-Fi/BLE people counter. [github.com/cyberman54/ESP32-Paxcounter](https://github.com/cyberman54/ESP32-Paxcounter)
-5. NeuralProphet Documentation. [neuralprophet.com](https://neuralprophet.com/contents.html)
-6. arduinoConfig, biblioteka za runtime konfiguraciju. [github.com/djherceg/arduinoConfig](https://github.com/djherceg/arduinoConfig)
-7. arduinoCmdProc, komandni procesor. [github.com/djherceg/arduinoCmdProc](https://github.com/djherceg/arduinoCmdProc)
-8. ESPresense. [github.com/ESPresense/ESPresense](https://github.com/ESPresense/ESPresense)
+5. arduinoConfig, biblioteka za runtime konfiguraciju. [github.com/djherceg/arduinoConfig](https://github.com/djherceg/arduinoConfig)
+6. arduinoCmdProc, komandni procesor. [github.com/djherceg/arduinoCmdProc](https://github.com/djherceg/arduinoCmdProc)
+7. ESPresense. [github.com/ESPresense/ESPresense](https://github.com/ESPresense/ESPresense)
