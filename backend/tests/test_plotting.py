@@ -103,3 +103,11 @@ def test_a_long_silence_and_raw_mode_still_render():
     assert render_devices_plot(readings).startswith(PNG_SIGNATURE)
     assert render_devices_plot(readings, "raw").startswith(PNG_SIGNATURE)
     assert render_devices_plot(readings, 60).startswith(PNG_SIGNATURE)
+
+
+def test_importing_the_api_does_not_load_the_plotting_libraries():
+    import subprocess
+    import sys
+
+    code = "import app.api, sys; sys.exit('matplotlib' in sys.modules or 'numpy' in sys.modules)"
+    assert subprocess.run([sys.executable, "-c", code]).returncode == 0

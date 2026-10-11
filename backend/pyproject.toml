@@ -12,6 +12,9 @@ dependencies = [
 ]
 
 [dependency-groups]
+azure = [
+    "azure-functions>=1.21,<2",
+]
 dev = [
     "pytest>=8,<9",
     "httpx>=0.27,<1",
@@ -19,6 +22,7 @@ dev = [
 
 [tool.uv]
 package = false
+default-groups = ["dev", "azure"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
