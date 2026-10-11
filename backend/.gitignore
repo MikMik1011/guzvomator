@@ -2,3 +2,5 @@
 __pycache__/
 .pytest_cache/
 .venv/
+requirements.txt
+azure-package.zip

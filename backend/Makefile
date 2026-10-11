@@ -7,7 +7,7 @@ API_HOST ?= 127.0.0.1
 
 COMPOSE_DEV = docker compose -f docker-compose.yml -f docker-compose.dev.yml
 
-.PHONY: test up down logs dev dev-db dev-down
+.PHONY: test up down logs dev dev-db dev-down azure-package azure-deploy
 
 test:
 	uv run pytest -q -p no:cacheprovider
@@ -32,3 +32,22 @@ dev: dev-db
 
 dev-down:
 	$(COMPOSE_DEV) down
+
+AZURE_GROUP ?= guzvomator-rg
+
+# Azure Functions wants a requirements.txt next to function_app.py; it is built
+# from the lock file, so it never drifts from the Docker image.
+requirements.txt: pyproject.toml uv.lock
+	uv export --no-dev --group azure --no-emit-project --no-hashes -o $@
+
+azure-package: requirements.txt
+	rm -f azure-package.zip
+	zip -qr azure-package.zip function_app.py host.json requirements.txt app \
+		-x "app/__pycache__/*" "app/mqtt_ingest.py"
+
+# Python apps on Flex Consumption are zipped and built remotely, so the
+# dependencies match the Linux host
+azure-deploy: azure-package
+	@test -n "$(AZURE_APP)" || (echo "set AZURE_APP to the function app name" && exit 1)
+	az functionapp deployment source config-zip --resource-group $(AZURE_GROUP) \
+		--name $(AZURE_APP) --src azure-package.zip --build-remote true
