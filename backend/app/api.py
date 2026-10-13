@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from app.buckets import load_plot_data, parse_bucket
 from app.db import PostgresRepository
 from app.handlers import (
     DEFAULT_LIMIT,
@@ -110,9 +111,8 @@ def get_plot(
 ):
     # Imported here: matplotlib and numpy are slow to load on a small serverless
     # instance, and only plots need them
-    from app.plotting import parse_bucket, render_devices_plot
+    from app.plotting import render_devices_plot
 
-    readings = select_readings(repository, from_, to, period, device_id, limit)
-    return Response(
-        render_devices_plot(readings, parse_bucket(bucket)), media_type="image/png"
-    )
+    start, end = resolve_range(datetime.now(timezone.utc), from_, to, period)
+    data = load_plot_data(repository, start, end, device_id, limit, parse_bucket(bucket))
+    return Response(render_devices_plot(data), media_type="image/png")

@@ -74,9 +74,9 @@ def test_list_filters_by_device():
     assert [r.device_id for r in rows] == ["other"]
 
 
-def test_list_respects_limit():
+def test_list_over_the_limit_keeps_the_newest_oldest_first():
     rows = list_readings(stored_repository(), NOW, NOW + timedelta(hours=1), limit=2)
-    assert len(rows) == 2
+    assert [r.ts.timestamp() - NOW_TS for r in rows] == [60, 120]
 
 
 def test_list_treats_naive_datetimes_as_utc():
