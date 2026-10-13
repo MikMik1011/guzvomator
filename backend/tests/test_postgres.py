@@ -58,3 +58,35 @@ def test_query_filters_and_orders(repository):
     assert [r.ts.timestamp() - NOW_TS for r in mine] == [0, 60]
     assert len(repository.query(start, end, None, 10)) == 3
     assert len(repository.query(start, end, None, 1)) == 1
+
+
+def test_query_over_the_limit_keeps_the_newest_oldest_first(repository):
+    for offset in range(5):
+        repository.insert(reading(ts=NOW_TS + offset), NOW)
+    rows = repository.query(None, NOW + timedelta(hours=1), None, 2)
+    assert [r.ts.timestamp() - NOW_TS for r in rows] == [3, 4]
+
+
+def test_time_span_is_the_oldest_and_newest_match(repository):
+    assert repository.time_span(None, NOW + timedelta(hours=1), None) is None
+    for offset in (0, 60, 120):
+        repository.insert(reading(ts=NOW_TS + offset), NOW)
+    repository.insert(reading(device_id="other", ts=NOW_TS + 500), NOW)
+    span = repository.time_span(None, NOW + timedelta(hours=1), "guzvo-a1b2c3")
+    assert span == (NOW, NOW + timedelta(seconds=120))
+
+
+def test_aggregate_buckets_per_device_with_percentiles(repository):
+    for offset, devices in ((0, 4), (1, 8), (2, 8), (3, 8), (4, 40), (400, 10)):
+        repository.insert(reading(ts=NOW_TS + offset, devices=devices, devices_above_rssi=2), NOW)
+    repository.insert(reading(device_id="other", devices=7), NOW)
+
+    buckets = repository.aggregate(None, NOW + timedelta(hours=1), None, 300)
+    mine = [b for b in buckets if b.device_id == "guzvo-a1b2c3"]
+    assert len(mine) == 2 and len(buckets) == 3
+    assert mine[0].start <= NOW and mine[0].start > NOW - timedelta(seconds=300)
+    assert mine[0].devices_mean == pytest.approx(13.6)
+    assert mine[0].devices_low == pytest.approx(5.6)
+    assert mine[0].devices_high == pytest.approx(27.2)
+    assert mine[0].above_mean == 2
+    assert mine[0].start < mine[1].start

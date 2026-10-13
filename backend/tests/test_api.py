@@ -103,6 +103,12 @@ def test_no_range_returns_everything_oldest_first(client):
     assert returned_ages(client) == [3 * 24 * 3600, 3600, 60]
 
 
+def test_over_the_limit_the_newest_readings_are_returned(client):
+    for age in (3 * 24 * 3600, 3600, 60):
+        post_at(client, age)
+    assert returned_ages(client, limit=2) == [3600, 60]
+
+
 @pytest.mark.parametrize(
     "period, expected",
     [
@@ -210,6 +216,21 @@ def test_plot_returns_a_png_for_a_period(client):
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.content.startswith(b"\x89PNG")
+
+
+def test_plot_covers_every_reading_even_beyond_the_row_limit(client):
+    for age in (3 * 24 * 3600, 3600, 60):
+        post_at(client, age)
+    response = client.get("/api/v1/plot", params={"limit": 1})
+    assert response.status_code == 200
+    assert response.content.startswith(b"\x89PNG")
+
+
+def test_plot_rejects_a_bucket_too_small_for_the_range(client):
+    post_at(client, 30 * 24 * 3600)
+    post_at(client, 60)
+    response = client.get("/api/v1/plot", params={"bucket": "10s"})
+    assert response.status_code == 400
 
 
 def test_plot_of_an_empty_range_is_still_an_image(client):

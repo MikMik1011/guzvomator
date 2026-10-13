@@ -98,10 +98,17 @@ def list_readings(
     device_id: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> list[StoredReading]:
+    start, end = validate_range(start, end)
+    return repository.query(start, end, device_id, min(limit, MAX_LIMIT))
+
+
+def validate_range(
+    start: datetime | None, end: datetime
+) -> tuple[datetime | None, datetime]:
     start, end = (None if start is None else _as_utc(start)), _as_utc(end)
     if start is not None and start >= end:
         raise InvalidRequest("from must be before to")
-    return repository.query(start, end, device_id, min(limit, MAX_LIMIT))
+    return start, end
 
 
 def readings_to_dicts(readings: list[StoredReading]) -> list[dict]:
